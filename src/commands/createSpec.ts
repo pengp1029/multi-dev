@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { Spec, RepoEntry } from '../types';
 import { WORKTREES_DIR } from '../config';
 import { saveSpec } from '../store';
 import { setActiveSpecName } from '../state';
 import { isGitRepo, getRepoRoot, hasCommits, createWorktree } from '../gitOps';
-import { generateWorkspaceFile, openWorkspaceFile } from '../workspaceOps';
+import { generateWorkspaceFile, openWorkspaceFile, getSpecWorktreeRoot } from '../workspaceOps';
 import { SpecWebviewProvider, CreateSpecData } from '../views/specWebview';
 
 export function registerCreateSpecCommand(
@@ -67,6 +68,12 @@ async function createSpecFromData(data: CreateSpecData, refreshViews: () => void
   // Create worktrees
   for (const repo of repos) {
     createWorktree(repo.originPath, repo.worktreePath, repo.branch);
+  }
+
+  // Ensure worktree root directory exists (even for specs with no repos)
+  const worktreeRoot = getSpecWorktreeRoot(data.name);
+  if (!fs.existsSync(worktreeRoot)) {
+    fs.mkdirSync(worktreeRoot, { recursive: true });
   }
 
   // Save spec YAML

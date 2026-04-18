@@ -40,6 +40,20 @@ export function updateWorkspaceFile(spec: Spec): string {
 }
 
 /**
+ * Update only the activeSpec setting in the current workspace file, without
+ * triggering a VSCode reload (because we're not modifying the folders).
+ * Call this when switching specs within a managed workspace file.
+ */
+export function updateCurrentWorkspaceFileActiveSpec(specName: string): void {
+  const wsFile = vscode.workspace.workspaceFile;
+  if (!wsFile) { return; }
+  const content = JSON.parse(fs.readFileSync(wsFile.fsPath, 'utf-8'));
+  content.settings = content.settings || {};
+  content.settings['tmuxAgent.activeSpec'] = specName;
+  fs.writeFileSync(wsFile.fsPath, JSON.stringify(content, null, 2), 'utf-8');
+}
+
+/**
  * Switch to a different spec's workspace folders WITHOUT reloading VSCode.
  *
  * Strategy: only touch folders that live under ~/.tmux-agent/worktrees/.
@@ -178,6 +192,16 @@ export function isInWorkspaceFile(specName: string): boolean {
   const wsFile = vscode.workspace.workspaceFile;
   if (!wsFile) { return false; }
   return wsFile.fsPath === getWorkspacePath(specName);
+}
+
+/**
+ * Check if the current VSCode window is using any tmux-agent managed
+ * .code-workspace file.
+ */
+export function isInManagedWorkspaceFile(): boolean {
+  const wsFile = vscode.workspace.workspaceFile;
+  if (!wsFile) { return false; }
+  return wsFile.fsPath.startsWith(WORKSPACES_DIR) && wsFile.fsPath.endsWith('.code-workspace');
 }
 
 export function workspaceFileExists(specName: string): boolean {

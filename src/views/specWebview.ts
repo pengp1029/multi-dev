@@ -161,12 +161,12 @@ export class SpecWebviewProvider {
   </div>
 
   <div class="form-group">
-    <label>Repositories</label>
+    <label>Repositories <span style="font-weight:normal;color:var(--vscode-descriptionForeground)">(optional)</span></label>
     <div class="btn-row">
       <button class="btn-secondary" id="addRepoBtn">Browse...</button>
     </div>
     <div class="repo-list" id="repoList">
-      <div class="hint" id="repoHint">No repos added yet. Click "Browse..." to add.</div>
+      <div class="hint" id="repoHint">No repos added yet. You can add repos later. Click "Browse..." to add now.</div>
     </div>
   </div>
 
@@ -229,9 +229,7 @@ export class SpecWebviewProvider {
       if (!name) {
         return;
       }
-      if (repos.length === 0) {
-        return;
-      }
+      // Remove the check that requires at least one repo - allow empty specs
       const branch = document.getElementById('branch').value.trim() || ('feat/' + name);
       vscode.postMessage({
         type: 'createSpec',

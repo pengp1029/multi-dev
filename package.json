@@ -2,7 +2,7 @@
   "name": "tmux-agent",
   "displayName": "Tmux Agent - Spec Manager",
   "description": "Manage development specs with git worktree isolation and AI agent integration",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "publisher": "tmux-agent",
   "engines": {
     "vscode": "^1.85.0"

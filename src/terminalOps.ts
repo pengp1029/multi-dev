@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { execFileSync } from 'child_process';
+import * as fs from 'fs';
 import { Spec } from './types';
 import { getSpecWorktreeRoot } from './workspaceOps';
 
@@ -186,6 +187,12 @@ export function launchAgentTerminal(spec: Spec): vscode.Terminal {
 
 function launchWithTmux(spec: Spec, cwd: string): vscode.Terminal {
   const sessionName = getTmuxSessionName(spec.name);
+
+  // Check if session exists and recreate if directory is gone (e.g., after spec delete)
+  if (tmuxSessionExists(sessionName) && !fs.existsSync(cwd)) {
+    log(`tmux session ${sessionName} exists but cwd ${cwd} gone, recreating session`);
+    killTmuxSession(sessionName);
+  }
 
   // Ensure tmux session exists for the target spec
   if (!tmuxSessionExists(sessionName)) {
