@@ -5,8 +5,7 @@ import { WORKTREES_DIR } from '../config';
 import { saveSpec } from '../store';
 import { setActiveSpecName } from '../state';
 import { isGitRepo, getRepoRoot, hasCommits, createWorktree } from '../gitOps';
-import { generateWorkspaceFile, addSpecFoldersToWorkspace, applyGitIsolationSettings } from '../workspaceOps';
-import { launchAgentTerminal } from '../terminalOps';
+import { generateWorkspaceFile, openWorkspaceFile } from '../workspaceOps';
 import { SpecWebviewProvider, CreateSpecData } from '../views/specWebview';
 
 export function registerCreateSpecCommand(
@@ -76,18 +75,11 @@ async function createSpecFromData(data: CreateSpecData, refreshViews: () => void
   // Generate .code-workspace file (for persistence)
   generateWorkspaceFile(spec);
 
-  // Apply git isolation settings BEFORE modifying workspace folders
-  // (updateWorkspaceFolders marks the config file dirty, blocking subsequent writes)
-  await applyGitIsolationSettings();
-
-  // Add spec folders to workspace (no VSCode reload!)
-  addSpecFoldersToWorkspace(spec);
-
-  // Set as active spec
+  // Set as active spec BEFORE opening workspace (window will reload)
   await setActiveSpecName(spec.name);
 
-  // Launch agent terminal
-  launchAgentTerminal(spec);
-
-  refreshViews();
+  // Open the .code-workspace file — gives a named workspace instead of
+  // "Untitled (Workspace)". This reloads the window; terminal and views
+  // will be restored by the activation path in extension.ts.
+  await openWorkspaceFile(spec.name);
 }

@@ -2,7 +2,7 @@
 
 ## 概述
 
-tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（Spec）。每个 Spec 关联多个 Git 仓库，通过 git worktree 实现代码隔离，每个 Spec 拥有独立的 VSCode workspace，切换 Spec 时 Git Source Control 视图自动切换。
+tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（Spec）。每个 Spec 关联多个 Git 仓库，通过 git worktree 实现代码隔离，每个 Spec 拥有独立的命名 `.code-workspace` 文件（通过 `vscode.openFolder` 打开，避免 "Untitled (Workspace)"），切换 Spec 时 Git Source Control 视图自动切换。
 
 ## 核心概念
 
@@ -24,7 +24,7 @@ tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（S
 - 点击侧边栏 "All Specs" 的 (+) 按钮
 - 填写 Spec 名称、描述、Feature 分支
 - 添加一个或多个 Git 仓库
-- 点击 Create → 自动创建 worktrees、打开 workspace、启动 AI agent（tmux 会话）
+- 点击 Create → 自动创建 worktrees、打开 `.code-workspace` 文件（窗口重新加载）、激活时自动恢复 workspace 并启动 AI agent（tmux 会话）
 
 ### 2. 开发中添加 Repo
 - 点击 "Current Spec" 的 (+) 按钮
@@ -32,7 +32,9 @@ tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（S
 - 输入分支名 → 立即添加到 workspace（无需重启）
 
 ### 3. 切换 Spec
-- 点击 "All Specs" 中另一个 Spec → VSCode 重新加载对应 workspace
+- 点击 "All Specs" 中另一个 Spec
+- 若当前已在某个 `.code-workspace` 文件中 → 在同一窗口内原子替换 workspace 文件夹（无需重新加载）
+- 若当前不在 workspace 文件中 → 通过 `vscode.openFolder` 打开目标 `.code-workspace`（窗口重新加载）
 - Git 视图自动切换到新 Spec 的 worktree 变更
 - 旧 Spec 的 VSCode 终端关闭，但 tmux 会话（`ta-<specName>`）保持运行，ducc 进程不中断
 - 新 Spec 若已有 tmux 会话则直接附着，恢复之前的会话上下文；否则创建新会话

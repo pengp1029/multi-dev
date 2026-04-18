@@ -39,7 +39,7 @@ tmux-agent/
 │   └── commands/
 │       ├── createSpec.ts     # 创建 Spec（含 Webview 表单）
 │       ├── startSpec.ts      # 启动 Spec（创建 worktree + 打开）
-│       ├── switchSpec.ts     # 切换 Spec（原子替换 workspace 文件夹）
+│       ├── switchSpec.ts     # 切换 Spec（在 workspace 内原子替换，否则打开 workspace 文件）
 │       ├── addRepo.ts        # 动态添加 Repo（无需重启）
 │       ├── commitSpec.ts     # 批量提交所有 worktree
 │       ├── cleanupSpec.ts    # 清理 Spec（移除 worktree，可保留配置）
@@ -79,14 +79,18 @@ commands/*.ts (命令处理)
     ↓
 ┌─────────┬──────────────┬───────────────┬──────────────┬──────────┐
 │ store.ts│ gitOps.ts    │workspaceOps.ts│terminalOps.ts│ gitScm.ts│
-│(YAML IO)│(git worktree)│(文件夹管理)    │(tmux 会话管理)│(SCM 视图) │
+│(YAML IO)│(git worktree)│(workspace 管理)│(tmux 会话管理)│(SCM 视图) │
 └─────────┴──────────────┴───────────────┴──────────────┴──────────┘
-    ↓                                          ↓              ↓
-~/.tmux-agent/specs/     VSCode workspace API  │         Git Extension API
-                                               ↓
-                                  tmux CLI (execFileSync)
-                                     ↕ attach/detach
-                                  VSCode Terminal API
+    ↓                          ↓                ↓              ↓
+~/.tmux-agent/specs/     ┌────┴────┐       tmux CLI       Git Extension API
+                         │         │      (execFileSync)
+                 vscode.openFolder │         ↕ attach/detach
+                 (打开 .code-workspace,│   VSCode Terminal API
+                  触发窗口重新加载)   │
+                         │         │
+                 updateWorkspaceFolders
+                 (已在 workspace 内时
+                  原子替换文件夹)
 ```
 
 ## 模块职责
@@ -106,7 +110,7 @@ commands/*.ts (命令处理)
 |------|------|
 | `gitOps.ts` | git worktree 增删、状态查询、提交、分支检测等 |
 | `gitScm.ts` | 通过 VSCode Git 扩展 API 管理 SCM 视图中的仓库开关，确保只显示当前 Spec 的仓库 |
-| `workspaceOps.ts` | `.code-workspace` 生成、workspace 文件夹动态增删切换、git 隔离设置 |
+| `workspaceOps.ts` | `.code-workspace` 生成、通过 `vscode.openFolder` 打开命名 workspace、workspace 文件夹动态增删切换、git 隔离设置、workspace 文件状态检测 |
 | `terminalOps.ts` | Agent 终端生命周期管理：优先通过 tmux 会话（`ta-<specName>`）持久化 ducc 进程，VSCode 终端仅作为附着窗口；tmux 不可用时回退到普通终端。使用 `execFileSync` 调用 tmux CLI 管理会话生命周期 |
 
 ### 视图模块
@@ -121,11 +125,12 @@ commands/*.ts (命令处理)
 ```
 create → active → [switch between specs] → cleanup/delete
   │                      │                       │
-  ├─ 创建 worktrees      ├─ 替换 workspace 文件夹  ├─ 移除 worktrees
+  ├─ 创建 worktrees      ├─ 重新生成 .code-workspace├─ 移除 worktrees
   ├─ 保存 YAML           ├─ 更新 active state     ├─ 删除 workspace 文件
-  ├─ 生成 .code-workspace├─ 启动新 agent 终端      ├─ 关闭终端
-  ├─ 添加到 workspace     │                       └─ (可选) 删除 YAML
-  └─ 启动 agent 终端      │
+  ├─ 生成 .code-workspace├─ 已在 workspace 内?     ├─ 关闭终端
+  ├─ openWorkspaceFile() │  ├─ yes: 原子替换文件夹  └─ (可选) 删除 YAML
+  │  (窗口重新加载)       │  └─ no: openWorkspaceFile()
+  └─ 激活时恢复终端等     │       (窗口重新加载)
                           │
                      addRepo (动态添加)
                           ├─ 创建新 worktree

@@ -15,9 +15,9 @@
    - 保存 Spec YAML 配置
    - 生成 `.code-workspace` 文件
    - 应用 git 隔离设置
-   - 动态添加 worktree 文件夹到 VSCode workspace
+   - 通过 `vscode.openFolder` 打开 `.code-workspace` 文件（窗口重新加载）
    - 设为活跃 Spec
-   - 启动 Agent 终端
+   - 激活时自动恢复：同步 workspace 文件夹、Git SCM 视图、启动 Agent 终端
 
 ### 2. 启动 Spec (`tmuxAgent.startSpec`)
 
@@ -28,21 +28,21 @@
 2. 创建 worktrees（如果不存在则创建，已存在则跳过）
 3. 更新状态为 active
 4. 生成/更新 `.code-workspace`
-5. 应用 git 隔离设置 + 添加文件夹到 workspace
-6. 启动 Agent 终端
+5. 通过 `vscode.openFolder` 打开 `.code-workspace` 文件（窗口重新加载）
+6. 激活时自动恢复：应用 git 隔离设置、同步 workspace 文件夹、Git SCM 视图、启动 Agent 终端
 
 ### 3. 切换 Spec (`tmuxAgent.switchSpec`)
 
 **入口**: 侧边栏 All Specs 视图的 `⇆` 按钮 或命令面板
 
-**核心机制**: 使用 `switchWorkspaceFolders()` 在同一 VSCode 窗口内原子替换 workspace 文件夹，终端不中断。
+**核心机制**: 若当前已在目标 Spec 的 `.code-workspace` 文件中，使用 `switchWorkspaceFolders()` 在同一窗口内原子替换文件夹（无需重新加载）；否则通过 `openWorkspaceFile()` 打开目标 `.code-workspace`，触发窗口重新加载。
 
 **流程**:
-1. 应用 git 隔离设置
-2. 原子替换 managed 文件夹（一次 `updateWorkspaceFolders` 调用）
-3. 通过 Git 扩展 API 关闭旧 Spec 仓库、打开新 Spec 仓库（`refreshGitRepositories`）
-4. 更新 active spec state
-5. 启动新 Spec 的 Agent 终端
+1. 持久化目标 Spec 为 active spec
+2. 应用 git 隔离设置
+3. 重新生成 `.code-workspace` 文件
+4. **已在目标 workspace 文件中**: 原子替换 managed 文件夹 → 刷新 Git SCM 视图 → 启动 Agent 终端
+5. **不在目标 workspace 文件中**: 通过 `vscode.openFolder` 打开 `.code-workspace`（窗口重新加载，激活时自动恢复）
 6. 刷新侧边栏
 
 ### 4. 添加 Repo (`tmuxAgent.addRepo`)
@@ -120,7 +120,7 @@
 仅靠 workspace settings 无法保证 SCM 视图正确切换，扩展通过 `vscode.git` API 主动管理：
 
 - **切换/启动 Spec 时**: `refreshGitRepositories()` 关闭不属于当前 Spec 的仓库，打开当前 Spec 的仓库
-- **扩展激活时**: 自动同步 workspace folders 和 SCM 仓库到 active spec，清理上次会话残留
+- **扩展激活时**: 若已在正确的 `.code-workspace` 文件中，同步 workspace folders 和 SCM 仓库到 active spec，清理上次会话残留；否则自动打开正确的 workspace 文件（触发窗口重新加载）
 - **依赖声明**: `package.json` 中 `extensionDependencies: ["vscode.git"]` 确保 Git 扩展先于本扩展激活
 
 ## Workspace 文件夹管理策略
@@ -140,8 +140,9 @@ workspace 文件夹:
 
 | 场景 | 函数 | 策略 |
 |------|------|------|
-| 首次创建/启动 | `addSpecFoldersToWorkspace()` | 在末尾追加 |
-| 切换 Spec | `switchWorkspaceFolders()` | 原子替换 managed 文件夹 |
+| 首次创建/启动 | `openWorkspaceFile()` | 打开 `.code-workspace` 文件（窗口重新加载） |
+| 切换 Spec（已在 workspace 文件中） | `switchWorkspaceFolders()` | 原子替换 managed 文件夹 |
+| 切换 Spec（不在 workspace 文件中） | `openWorkspaceFile()` | 打开 `.code-workspace` 文件（窗口重新加载） |
 | 添加单个 Repo | `addFolderToCurrentWorkspace()` | 在末尾追加单个 |
 | 删除/清理 | `removeFoldersFromCurrentWorkspace()` | 原子移除 managed 文件夹 |
 

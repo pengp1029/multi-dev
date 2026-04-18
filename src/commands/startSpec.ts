@@ -2,9 +2,7 @@ import * as vscode from 'vscode';
 import { loadSpec, saveSpec } from '../store';
 import { setActiveSpecName } from '../state';
 import { createWorktree } from '../gitOps';
-import { generateWorkspaceFile, addSpecFoldersToWorkspace, applyGitIsolationSettings } from '../workspaceOps';
-import { launchAgentTerminal } from '../terminalOps';
-import { refreshGitRepositories } from '../gitScm';
+import { generateWorkspaceFile, openWorkspaceFile } from '../workspaceOps';
 import { SpecTreeItem } from '../views/specTreeProvider';
 
 export function registerStartSpecCommand(refreshViews: () => void): vscode.Disposable {
@@ -42,26 +40,16 @@ export function registerStartSpecCommand(refreshViews: () => void): vscode.Dispo
       spec.status = 'active';
       saveSpec(spec);
 
-      // Generate workspace file (for external use / persistence)
+      // Generate workspace file
       generateWorkspaceFile(spec);
 
-      // Apply git isolation settings BEFORE modifying workspace folders
-      await applyGitIsolationSettings();
-
-      // Add spec folders to workspace (no reload!)
-      addSpecFoldersToWorkspace(spec);
-
-      // Refresh Git SCM view to show new spec's worktrees
-      await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
-
-      // Update active spec state
+      // Set as active spec BEFORE opening workspace (window will reload)
       await setActiveSpecName(spec.name);
 
-      // Launch agent terminal
-      launchAgentTerminal(spec);
-
-      refreshViews();
-      vscode.window.showInformationMessage(`Spec "${spec.name}" started.`);
+      // Open the .code-workspace file — gives a named workspace instead of
+      // "Untitled (Workspace)". This reloads the window; terminal, Git SCM,
+      // and views will be restored by the activation path in extension.ts.
+      await openWorkspaceFile(spec.name);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       vscode.window.showErrorMessage(`Failed to start spec: ${msg}`);

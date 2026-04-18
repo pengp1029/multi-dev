@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { listSpecs, loadSpec } from '../store';
 import { getActiveSpecName, setActiveSpecName } from '../state';
-import { switchWorkspaceFolders, applyGitIsolationSettings } from '../workspaceOps';
+import { switchWorkspaceFolders, applyGitIsolationSettings, generateWorkspaceFile, openWorkspaceFile, isInWorkspaceFile } from '../workspaceOps';
 import { launchAgentTerminal } from '../terminalOps';
 import { refreshGitRepositories } from '../gitScm';
 import { SpecTreeItem } from '../views/specTreeProvider';
@@ -53,36 +53,46 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
     await applyGitIsolationSettings();
     console.log('[tmux-agent:switchSpec] git isolation applied');
 
-    // Refresh views BEFORE switchWorkspaceFolders — the API call triggers an
-    // async workspace-change event that may cause VS Code to re-render the
-    // sidebar, and subsequent code may not execute if the extension host
-    // restarts.  Refreshing first ensures the tree providers re-query
-    // getActiveSpecName() which was already persisted above.
-    refreshViews();
+    // Regenerate .code-workspace file with new spec's folders
+    generateWorkspaceFile(spec);
 
-    // Switch workspace folders (may trigger extension host restart in some IDEs)
-    const success = switchWorkspaceFolders(spec);
-    console.log(`[tmux-agent:switchSpec] switchWorkspaceFolders=${success}`);
-    if (!success) {
-      vscode.window.showErrorMessage('Failed to switch workspace folders.');
-      return;
+    if (isInWorkspaceFile(spec.name)) {
+      // Already in this spec's workspace file — update folders in-place (no reload)
+      // Refresh views BEFORE switchWorkspaceFolders — the API call triggers an
+      // async workspace-change event that may cause VS Code to re-render the
+      // sidebar, and subsequent code may not execute if the extension host
+      // restarts.  Refreshing first ensures the tree providers re-query
+      // getActiveSpecName() which was already persisted above.
+      refreshViews();
+
+      const success = switchWorkspaceFolders(spec);
+      console.log(`[tmux-agent:switchSpec] switchWorkspaceFolders=${success}`);
+      if (!success) {
+        vscode.window.showErrorMessage('Failed to switch workspace folders.');
+        return;
+      }
+
+      // Refresh Git SCM view to match new spec's worktrees
+      await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
+      console.log('[tmux-agent:switchSpec] git repos refreshed');
+
+      // Launch agent terminal for the new spec
+      try {
+        launchAgentTerminal(spec);
+      } catch (e) {
+        console.error('[tmux-agent] launchAgentTerminal failed in switchSpec:', e);
+      }
+
+      // Refresh again after all operations complete
+      refreshViews();
+      vscode.window.showInformationMessage(`Switched to spec "${spec.name}".`);
+      console.log('[tmux-agent:switchSpec] done');
+    } else {
+      // Not in a .code-workspace file (or in a different spec's workspace) —
+      // open the target workspace file. This reloads the window; terminal,
+      // Git SCM, and views will be restored by the activation path.
+      console.log('[tmux-agent:switchSpec] opening workspace file (will reload)');
+      await openWorkspaceFile(spec.name);
     }
-
-    // Refresh Git SCM view to match new spec's worktrees
-    await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
-    console.log('[tmux-agent:switchSpec] git repos refreshed');
-
-    // Launch agent terminal for the new spec
-    try {
-      launchAgentTerminal(spec);
-    } catch (e) {
-      console.error('[tmux-agent] launchAgentTerminal failed in switchSpec:', e);
-    }
-
-    // Refresh again after all operations complete — covers the normal
-    // (non-restart) path where repo statuses may have changed.
-    refreshViews();
-    vscode.window.showInformationMessage(`Switched to spec "${spec.name}".`);
-    console.log('[tmux-agent:switchSpec] done');
   });
 }

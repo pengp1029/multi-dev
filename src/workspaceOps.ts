@@ -140,6 +140,35 @@ export function removeFoldersFromCurrentWorkspace(repos: RepoEntry[]): void {
   vscode.workspace.updateWorkspaceFolders(start, deleteCount);
 }
 
+/**
+ * Open the .code-workspace file for a spec, giving VSCode a named workspace
+ * instead of an "Untitled (Workspace)".
+ *
+ * This triggers a window reload. Pass `forceNewWindow: true` to open in a
+ * separate window instead.
+ */
+export async function openWorkspaceFile(specName: string, forceNewWindow = false): Promise<void> {
+  const wsPath = getWorkspacePath(specName);
+  if (!fs.existsSync(wsPath)) {
+    throw new Error(`Workspace file not found: ${wsPath}`);
+  }
+  await vscode.commands.executeCommand(
+    'vscode.openFolder',
+    vscode.Uri.file(wsPath),
+    { forceNewWindow },
+  );
+}
+
+/**
+ * Check if the current VSCode window is already using a specific spec's
+ * .code-workspace file.
+ */
+export function isInWorkspaceFile(specName: string): boolean {
+  const wsFile = vscode.workspace.workspaceFile;
+  if (!wsFile) { return false; }
+  return wsFile.fsPath === getWorkspacePath(specName);
+}
+
 export function workspaceFileExists(specName: string): boolean {
   return fs.existsSync(getWorkspacePath(specName));
 }
