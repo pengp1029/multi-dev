@@ -3,7 +3,7 @@ import { ensureDirs } from './config';
 import { initState, getActiveSpecName } from './state';
 import { loadSpec } from './store';
 import { switchWorkspaceFolders, applyGitIsolationSettings } from './workspaceOps';
-import { refreshGitRepositories } from './gitScm';
+import { refreshGitRepositories, startRepoGuard } from './gitScm';
 import { launchAgentTerminal, registerTerminalCloseHandler } from './terminalOps';
 import { CurrentSpecTreeProvider, AllSpecsTreeProvider } from './views/specTreeProvider';
 import { registerCreateSpecCommand } from './commands/createSpec';
@@ -50,6 +50,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // --- Terminal lifecycle ---
   registerTerminalCloseHandler(context);
+
+  // --- Start repo guard: closes any git repo not belonging to active spec ---
+  startRepoGuard(context);
 
   // --- Auto-sync workspace folders and Git SCM for active spec ---
   const activeSpecName = getActiveSpecName();

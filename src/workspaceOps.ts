@@ -28,8 +28,6 @@ export function generateWorkspaceFile(spec: Spec): string {
       path: r.worktreePath,
     })),
     settings: {
-      'git.openRepositoryInParentFolders': 'never',
-      'git.repositoryScanMaxDepth': 1,
       'tmuxAgent.activeSpec': spec.name,
     },
   };
@@ -100,9 +98,17 @@ export function addSpecFoldersToWorkspace(spec: Spec): boolean {
 }
 
 export async function applyGitIsolationSettings(): Promise<void> {
+  // No workspace open → nothing to configure (avoids "no workspace" error on first spec creation)
+  if (!vscode.workspace.workspaceFolders || vscode.workspace.workspaceFolders.length === 0) {
+    return;
+  }
+  // Remove the "never" setting — it blocks git worktree repos from being
+  // opened because their .git files point to parent repos.
+  // Instead, isolation is handled by the repo guard in gitScm.ts which
+  // closes any repo not belonging to the current spec via onDidOpenRepository.
   const gitConfig = vscode.workspace.getConfiguration('git');
-  await gitConfig.update('openRepositoryInParentFolders', 'never', vscode.ConfigurationTarget.Workspace);
-  await gitConfig.update('repositoryScanMaxDepth', 1, vscode.ConfigurationTarget.Workspace);
+  await gitConfig.update('openRepositoryInParentFolders', undefined, vscode.ConfigurationTarget.Workspace);
+  await gitConfig.update('repositoryScanMaxDepth', undefined, vscode.ConfigurationTarget.Workspace);
 }
 
 export function addFolderToCurrentWorkspace(repo: RepoEntry): boolean {

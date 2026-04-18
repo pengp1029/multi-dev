@@ -186,6 +186,69 @@ if (activeSpecName) {
 
 ---
 
+## Bug 9: Git worktree repos blocked by `openRepositoryInParentFolders: "never"`
+
+**现象**: 切换 spec 后 SCM 视图显示 "在工作区的父文件夹或打开的文件中找到了 Git 存储库"，需手动点击 "打开存储库"。首次加载时也无 Git 信息。
+
+**原因**: Git worktree 目录下的 `.git` 是一个文件（非目录），内容指向原始仓库的 `.git/worktrees/<name>`。VS Code Git 扩展跟随此指针后，将仓库归类为 "parent folder repository"。`openRepositoryInParentFolders: "never"` 设置导致 Git 扩展**拒绝打开**这类仓库——无论是自动发现还是通过 `api.openRepository()` 编程调用都会被阻止。
+
+**修复**:
+- 移除 `openRepositoryInParentFolders: "never"` 和 `repositoryScanMaxDepth: 1` 设置
+- `applyGitIsolationSettings()` 改为清除这些设置（设为 `undefined`），而非设置它们
+- `generateWorkspaceFile()` 不再在 `.code-workspace` 中包含这些 git 设置
+- Spec 间的仓库隔离完全依靠 workspace folder 管理 + `git.close` 显式关闭
+- `refreshGitRepositories()` 改为等待 `onDidOpenRepository` 事件确认自动发现，超时后再手动 `openRepository` 兜底
+
+**代码** (`workspaceOps.ts`):
+```typescript
+export async function applyGitIsolationSettings(): Promise<void> {
+  const gitConfig = vscode.workspace.getConfiguration('git');
+  // Do NOT set openRepositoryInParentFolders to "never" — git worktrees have a
+  // .git file pointing to the original repo, and the Git extension classifies them
+  // as "parent folder repositories". Setting "never" prevents Git from opening
+  // worktree repos even when they are direct workspace folders.
+  // Instead, rely on workspace folder management + explicit git.close for isolation.
+  await gitConfig.update('openRepositoryInParentFolders', undefined, vscode.ConfigurationTarget.Workspace);
+  await gitConfig.update('repositoryScanMaxDepth', undefined, vscode.ConfigurationTarget.Workspace);
+}
+```
+
+**代码** (`gitScm.ts`):
+```typescript
+export async function refreshGitRepositories(newPaths: string[]): Promise<void> {
+  const api = await getGitAPI();
+  if (!api) { return; }
+
+  const newPathSet = new Set(newPaths);
+
+  // 1. Close repositories that are no longer in the new spec
+  const reposToClose = [...api.repositories].filter(r => !newPathSet.has(r.rootUri.fsPath));
+  for (const repo of reposToClose) {
+    await vscode.commands.executeCommand('git.close', repo.rootUri);
+  }
+
+  // 2. Wait for Git extension to auto-discover new repos from workspace folders
+  const pathsToOpen = newPaths.filter(
+    p => !api.repositories.some(r => r.rootUri.fsPath === p)
+  );
+  if (pathsToOpen.length === 0) { return; }
+
+  const opened = await waitForReposToOpen(api, pathsToOpen, 3000);
+
+  // 3. Fallback: if auto-discovery timed out, open manually
+  if (!opened) {
+    const stillMissing = newPaths.filter(
+      p => !api.repositories.some(r => r.rootUri.fsPath === p)
+    );
+    for (const p of stillMissing) {
+      await api.openRepository(vscode.Uri.file(p));
+    }
+  }
+}
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API
@@ -194,6 +257,7 @@ if (activeSpecName) {
 2. **调用后 workspace 配置文件变 dirty** — 后续 Configuration API 写入会失败
 3. **不能删除所有文件夹** — Extension Development Host 的项目文件夹不能被移除
 4. **返回 false 不代表异步失败** — 是同步返回的操作结果
+5. **返回 true 不代表变更已生效** — 必须监听 `onDidChangeWorkspaceFolders` 事件确认 folder 变更完成后，才能安全调用依赖 workspace folder 的 API
 
 ### VSCode Webview
 
@@ -205,8 +269,9 @@ if (activeSpecName) {
 
 1. **`git.close` 命令接受 `Uri` 参数** — 传 repo 对象无效，需传 `repo.rootUri`
 2. **Git 扩展可能未激活** — 通过 `extensionDependencies` 声明依赖或在代码中 `await activate()`
-3. **`openRepositoryInParentFolders: "never"` 会阻止自动发现** — 需主动调用 `api.openRepository()` 打开仓库
+3. **`openRepositoryInParentFolders` 不能设为 `"never"`** — Git worktree 的 `.git` 文件指向原始仓库，Git 扩展将其归类为 "parent folder repository"；设为 `"never"` 会彻底阻止 Git 扩展打开 worktree 仓库（包括 `api.openRepository()` 编程调用），必须保持默认值或设为 `"prompt"`/`"always"`
 4. **workspace folder 变化不等于 SCM 视图更新** — 必须通过 Git API 显式管理仓库
+5. **`onDidOpenRepository`/`onDidCloseRepository` 事件可用于同步等待** — 替代固定延时，实现可靠的仓库就绪检测
 
 ### Git Worktree
 

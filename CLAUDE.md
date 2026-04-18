@@ -55,6 +55,42 @@
 ---
 ```
 
+## 自动提交决策规则
+
+每次 Stop hook 注入 `<auto-commit-check>` 提示时，必须执行以下决策流程：
+
+### 1. 是否需要提交
+
+| 情况 | 决策 |
+|------|------|
+| 有实质性代码/配置变更 | 需要提交 |
+| 仅读取/分析/回答问题，无文件修改 | 不提交 |
+| 变更仅为临时调试代码（console.log 等） | 不提交，提醒用户 |
+
+### 2. Amend 还是新提交
+
+| 条件 | 操作 |
+|------|------|
+| 本轮改动是对**上一次我创建的提交**的补充/修正（修 lint、补漏改、文档补全） | `git commit --amend` |
+| 本轮是**独立的新任务**（新功能、新 bugfix、新 refactor） | 新提交 |
+| 上一次提交**不是我创建的**（用户手动提交、其他工具提交） | 新提交 |
+| 上一次提交**已推送到远端** | 新提交（禁止 amend 已发布的提交） |
+
+### 3. 提交消息规范
+
+- 格式：`<type>: <简短描述>`
+- type 取值：`feat` / `fix` / `refactor` / `docs` / `chore`
+- 提交时使用 `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
+
+### 4. 执行步骤
+
+1. 运行 `git status` 和 `git diff` 确认变更内容
+2. 运行 `git log -1` 查看上一次提交
+3. 检查上一次提交是否已推送：`git log --oneline origin/<branch>..HEAD`
+4. 根据规则决策 amend/新提交
+5. 执行 `git add` + `git commit`
+6. 运行 `git status` 验证提交成功
+
 ## 代码规范
 
 - 所有 md 文档保存在 `doc/` 目录下
