@@ -72,6 +72,10 @@ export function activate(context: vscode.ExtensionContext) {
         } catch (e) {
           console.error('[tmux-agent] launchAgentTerminal failed on activation:', e);
         }
+        // Refresh tree views after activation restore — when the extension
+        // host restarts due to workspace folder changes, the tree providers
+        // are freshly constructed but VS Code may not re-render them.
+        refreshViews();
       }, 2000);
     }
   }

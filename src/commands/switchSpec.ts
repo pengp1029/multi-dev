@@ -53,6 +53,13 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
     await applyGitIsolationSettings();
     console.log('[tmux-agent:switchSpec] git isolation applied');
 
+    // Refresh views BEFORE switchWorkspaceFolders — the API call triggers an
+    // async workspace-change event that may cause VS Code to re-render the
+    // sidebar, and subsequent code may not execute if the extension host
+    // restarts.  Refreshing first ensures the tree providers re-query
+    // getActiveSpecName() which was already persisted above.
+    refreshViews();
+
     // Switch workspace folders (may trigger extension host restart in some IDEs)
     const success = switchWorkspaceFolders(spec);
     console.log(`[tmux-agent:switchSpec] switchWorkspaceFolders=${success}`);
@@ -72,6 +79,8 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
       console.error('[tmux-agent] launchAgentTerminal failed in switchSpec:', e);
     }
 
+    // Refresh again after all operations complete — covers the normal
+    // (non-restart) path where repo statuses may have changed.
     refreshViews();
     vscode.window.showInformationMessage(`Switched to spec "${spec.name}".`);
     console.log('[tmux-agent:switchSpec] done');

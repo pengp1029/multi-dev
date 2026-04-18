@@ -249,6 +249,41 @@ export async function refreshGitRepositories(newPaths: string[]): Promise<void> 
 
 ---
 
+## Bug 10: CURRENT SPEC tree view 切换 spec 后不刷新
+
+**现象**: 用户在 ALL SPECS 中点击 spec 切换后，CURRENT SPEC 区域仍显示 "No active spec"，不会刷新为新的当前 spec。
+
+**原因**: `switchSpec` 命令中，`refreshViews()` 在 `switchWorkspaceFolders()` 之后才调用。但 `vscode.workspace.updateWorkspaceFolders()` 是异步生效的，可能触发扩展宿主重启或异步重渲染，导致 `refreshViews()` 要么不执行（宿主重启），要么执行后被 VS Code 的重渲染覆盖。同时 `activate()` 恢复路径中也缺少 `refreshViews()` 调用。
+
+**修复**:
+- 在 `switchSpec` 中将 `refreshViews()` 提前到 `switchWorkspaceFolders()` 之前执行（此时 `setActiveSpecName` 已完成，tree provider 可以读到新 spec）
+- 在 `switchWorkspaceFolders()` 之后再次调用 `refreshViews()` 覆盖正常路径
+- 在 `activate()` 的恢复路径 `setTimeout` 回调末尾添加 `refreshViews()`，确保扩展重启后 tree view 也能刷新
+
+**代码** (`src/commands/switchSpec.ts`):
+```typescript
+// Refresh views BEFORE switchWorkspaceFolders — the API call triggers an
+// async workspace-change event that may cause VS Code to re-render the
+// sidebar, and subsequent code may not execute if the extension host
+// restarts.
+refreshViews();
+
+// Switch workspace folders (may trigger extension host restart)
+const success = switchWorkspaceFolders(spec);
+```
+
+**代码** (`src/extension.ts`):
+```typescript
+setTimeout(async () => {
+  await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
+  // ...
+  // Refresh tree views after activation restore
+  refreshViews();
+}, 2000);
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API
@@ -258,6 +293,7 @@ export async function refreshGitRepositories(newPaths: string[]): Promise<void> 
 3. **不能删除所有文件夹** — Extension Development Host 的项目文件夹不能被移除
 4. **返回 false 不代表异步失败** — 是同步返回的操作结果
 5. **返回 true 不代表变更已生效** — 必须监听 `onDidChangeWorkspaceFolders` 事件确认 folder 变更完成后，才能安全调用依赖 workspace folder 的 API
+6. **调用后可能触发扩展宿主重启** — 后续代码可能不执行；需要在调用前完成关键状态持久化和 UI 刷新
 
 ### VSCode Webview
 
