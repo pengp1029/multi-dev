@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { ensureDirs } from './config';
 import { initState, getActiveSpecName } from './state';
 import { loadSpec } from './store';
-import { switchWorkspaceFolders, applyGitIsolationSettings, isInWorkspaceFile, openWorkspaceFile, generateWorkspaceFile } from './workspaceOps';
+import { switchWorkspaceFolders, applyGitIsolationSettings } from './workspaceOps';
 import { refreshGitRepositories, startRepoGuard } from './gitScm';
 import { launchAgentTerminal, registerTerminalCloseHandler } from './terminalOps';
 import { CurrentSpecTreeProvider, AllSpecsTreeProvider } from './views/specTreeProvider';
@@ -59,29 +59,23 @@ export function activate(context: vscode.ExtensionContext) {
   if (activeSpecName) {
     const spec = loadSpec(activeSpecName);
     if (spec && spec.status === 'active') {
-      // Ensure .code-workspace file exists and is up-to-date
-      generateWorkspaceFile(spec);
+      // Sync workspace folders in-place for the active spec.
+      // Do NOT open workspace files here — only explicit user actions
+      // (create/start/switch) should trigger window reloads.
+      applyGitIsolationSettings().then(() => {
+        switchWorkspaceFolders(spec);
+      });
 
-      if (isInWorkspaceFile(activeSpecName)) {
-        // Already in the correct .code-workspace — sync folders in-place
-        applyGitIsolationSettings().then(() => {
-          switchWorkspaceFolders(spec);
-        });
-
-        // Sync Git SCM view after Git extension is ready
-        setTimeout(async () => {
-          await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
-          try {
-            launchAgentTerminal(spec);
-          } catch (e) {
-            console.error('[tmux-agent] launchAgentTerminal failed on activation:', e);
-          }
-          refreshViews();
-        }, 2000);
-      } else {
-        // Not in the right workspace file — open it (reloads window)
-        openWorkspaceFile(activeSpecName);
-      }
+      // Sync Git SCM view after Git extension is ready
+      setTimeout(async () => {
+        await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
+        try {
+          launchAgentTerminal(spec);
+        } catch (e) {
+          console.error('[tmux-agent] launchAgentTerminal failed on activation:', e);
+        }
+        refreshViews();
+      }, 2000);
     }
   }
 }

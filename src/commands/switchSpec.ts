@@ -53,11 +53,10 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
     await applyGitIsolationSettings();
     console.log('[tmux-agent:switchSpec] git isolation applied');
 
-    // Regenerate .code-workspace file with new spec's folders
-    generateWorkspaceFile(spec);
-
     if (isInWorkspaceFile(spec.name)) {
-      // Already in this spec's workspace file — update folders in-place (no reload)
+      // Already in this spec's workspace file — update folders in-place (no reload).
+      // Do NOT call generateWorkspaceFile here — writing to the active
+      // .code-workspace triggers a VSCode reload.
       // Refresh views BEFORE switchWorkspaceFolders — the API call triggers an
       // async workspace-change event that may cause VS Code to re-render the
       // sidebar, and subsequent code may not execute if the extension host
@@ -89,8 +88,9 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
       console.log('[tmux-agent:switchSpec] done');
     } else {
       // Not in a .code-workspace file (or in a different spec's workspace) —
-      // open the target workspace file. This reloads the window; terminal,
-      // Git SCM, and views will be restored by the activation path.
+      // generate the target workspace file and open it. This reloads the
+      // window; terminal, Git SCM, and views will be restored by activation.
+      generateWorkspaceFile(spec);
       console.log('[tmux-agent:switchSpec] opening workspace file (will reload)');
       await openWorkspaceFile(spec.name);
     }

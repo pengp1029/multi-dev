@@ -332,6 +332,51 @@ if (deleteCount === newFolders.length) {
 
 ---
 
+## Bug 13: 写入活跃 .code-workspace 文件导致无限重载循环
+
+**现象**: 切换 Spec 时 VSCode 窗口无限重新加载（死循环）。
+
+**原因**: `extension.ts` 激活逻辑和 `switchSpec.ts` 中，`generateWorkspaceFile(spec)` 在 `isInWorkspaceFile()` 检查之前无条件调用。当已经在目标 `.code-workspace` 文件内时，`fs.writeFileSync` 写入当前活跃的 workspace 文件 → VSCode 检测到 workspace 文件被修改 → 触发窗口重新加载 → activation 再次运行 → 再次写入 → 无限循环。
+
+**修复**:
+- 将 `generateWorkspaceFile()` 调用移到 `isInWorkspaceFile()` 检查的 `else` 分支中
+- 仅在即将打开另一个 `.code-workspace` 文件时才生成文件
+- 当已经在正确的 `.code-workspace` 中时，文件内容已是最新的，不需要重新生成
+
+**代码** (`src/extension.ts`):
+```typescript
+if (isInWorkspaceFile(activeSpecName)) {
+  // Already in the correct .code-workspace — sync folders in-place.
+  // Do NOT call generateWorkspaceFile here — writing to the active
+  // .code-workspace triggers a VSCode reload → infinite loop.
+  applyGitIsolationSettings().then(() => {
+    switchWorkspaceFolders(spec);
+  });
+  // ...
+} else {
+  // Not in the right workspace file — generate and open it (reloads window)
+  generateWorkspaceFile(spec);
+  openWorkspaceFile(activeSpecName);
+}
+```
+
+**代码** (`src/commands/switchSpec.ts`):
+```typescript
+if (isInWorkspaceFile(spec.name)) {
+  // Already in this spec's workspace file — update folders in-place (no reload).
+  // Do NOT call generateWorkspaceFile here — writing to the active
+  // .code-workspace triggers a VSCode reload.
+  // ...
+} else {
+  // Not in a .code-workspace file (or in a different spec's workspace) —
+  // generate the target workspace file and open it.
+  generateWorkspaceFile(spec);
+  await openWorkspaceFile(spec.name);
+}
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API
@@ -362,6 +407,11 @@ if (deleteCount === newFolders.length) {
 3. **`openRepositoryInParentFolders` 不能设为 `"never"`** — Git worktree 的 `.git` 文件指向原始仓库，Git 扩展将其归类为 "parent folder repository"；设为 `"never"` 会彻底阻止 Git 扩展打开 worktree 仓库（包括 `api.openRepository()` 编程调用），必须保持默认值或设为 `"prompt"`/`"always"`
 4. **workspace folder 变化不等于 SCM 视图更新** — 必须通过 Git API 显式管理仓库
 5. **`onDidOpenRepository`/`onDidCloseRepository` 事件可用于同步等待** — 替代固定延时，实现可靠的仓库就绪检测
+
+### `.code-workspace` 文件操作
+
+1. **禁止写入当前活跃的 workspace 文件** — `fs.writeFileSync` 修改当前打开的 `.code-workspace` 文件会触发 VSCode 自动重载窗口；如果写入发生在 `activate()` 路径中，会形成 写入 → 重载 → activate → 写入 的无限循环
+2. **`generateWorkspaceFile()` 必须在 `isInWorkspaceFile()` 守卫之后** — 仅在即将通过 `openWorkspaceFile()` 打开另一个 workspace 文件时才调用；已在正确 workspace 中时，文件内容已是最新的
 
 ### Git Worktree
 
