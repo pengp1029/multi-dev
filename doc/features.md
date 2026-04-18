@@ -152,3 +152,51 @@ workspace 文件夹:
 - 自动启动：创建/启动/切换 Spec 时自动创建终端并执行 agent 命令
 - 生命周期追踪：`agentTerminals` Map 追踪所有终端，`onDidCloseTerminal` 清理已关闭的
 - 扩展激活时：如有 active spec，同步 workspace folders 并刷新 Git SCM 视图，延迟 2 秒恢复终端
+
+### tmux 会话持久化
+
+Agent 终端默认运行在 tmux 会话中，实现跨切换和重启的上下文持久化。
+
+**会话命名**: 每个 Spec 对应一个 tmux 会话 `ta-<specName>`（如 `ta-user-auth`），名称中的特殊字符会被替换为 `-`。
+
+**启动流程** (check → reuse → attach → create):
+1. 若当前 Spec 已有存活的 VSCode 终端 → 直接显示
+2. 否则销毁其他 Spec 的 VSCode 终端（同一时刻只保留一个 Agent 终端）
+3. 若 tmux 会话 `ta-<specName>` 已存在 → 创建 VSCode 终端附着到该会话（上下文保留）
+4. 若 tmux 会话不存在 → 创建新的后台 tmux 会话、发送 agent 命令、再创建 VSCode 终端附着
+
+**切换 Spec 时**: 旧 Spec 的 VSCode 终端关闭，但其 tmux 会话保持运行（ducc 进程不中断）。切换回来时重新附着，恢复之前的会话上下文。
+
+**关闭 VSCode 时**: tmux 会话不受影响，所有 Spec 的 ducc 进程继续在后台运行。重新打开 VSCode 后自动重新附着。
+
+**删除/清理 Spec 时**: 同时终止对应的 tmux 会话（`tmux kill-session`），确保不留残余进程。
+
+**tmux 未安装时的回退**: 如果系统未安装 tmux，自动回退到普通 VSCode 终端模式——直接在终端中执行 agent 命令，行为与旧版本一致。tmux 可用性在首次调用时检测并缓存。
+
+## 自动提交决策机制
+
+通过 Claude Code 的 Stop hook 与 CLAUDE.md 规则协作，实现每次 AI 任务完成后自动判断是否需要 git 提交，以及采用新提交还是 amend。
+
+### 触发流程
+
+1. AI 每次回复结束后，Stop hook 脚本（`.claude/hooks/auto-commit-prompt.sh`）自动执行
+2. 脚本检测当前仓库是否存在未提交的 git 变更（staged + unstaged + untracked）
+3. 若有变更，向对话注入 `<auto-commit-check>` 提示块，触发 AI 进入提交决策流程
+4. 若无变更，hook 静默退出，不干扰对话
+
+### 决策规则
+
+AI 根据 CLAUDE.md 中定义的规则进行判断：
+
+| 场景 | 决策 | 理由 |
+|------|------|------|
+| 上一次提交已推送到远程 | **新提交** | 已推送的提交禁止 amend，避免 force push 风险 |
+| 当前改动属于独立新任务 | **新提交** | 语义上是不同的工作单元，应有独立的提交记录 |
+| 当前改动是对上次未推送提交的补充 | **amend** | 属于同一工作单元的增量修改，合并为一个提交更清晰 |
+| 变更仅涉及文档更新（由 sub-agent 产生） | **amend** | 文档随代码一起提交，不单独占用提交记录 |
+
+### 涉及文件
+
+- `.claude/hooks/auto-commit-prompt.sh` — Stop hook 脚本，检测变更并注入提示
+- `.claude/settings.json` — 注册 Stop hook
+- `CLAUDE.md` — 定义提交决策规则段落

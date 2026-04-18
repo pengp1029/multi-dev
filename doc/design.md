@@ -24,7 +24,7 @@ tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（S
 - 点击侧边栏 "All Specs" 的 (+) 按钮
 - 填写 Spec 名称、描述、Feature 分支
 - 添加一个或多个 Git 仓库
-- 点击 Create → 自动创建 worktrees、打开 workspace、启动 AI agent
+- 点击 Create → 自动创建 worktrees、打开 workspace、启动 AI agent（tmux 会话）
 
 ### 2. 开发中添加 Repo
 - 点击 "Current Spec" 的 (+) 按钮
@@ -34,6 +34,8 @@ tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（S
 ### 3. 切换 Spec
 - 点击 "All Specs" 中另一个 Spec → VSCode 重新加载对应 workspace
 - Git 视图自动切换到新 Spec 的 worktree 变更
+- 旧 Spec 的 VSCode 终端关闭，但 tmux 会话（`ta-<specName>`）保持运行，ducc 进程不中断
+- 新 Spec 若已有 tmux 会话则直接附着，恢复之前的会话上下文；否则创建新会话
 
 ### 4. 提交代码
 - Command Palette: "Tmux Agent: Commit All"
@@ -42,8 +44,33 @@ tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（S
 
 ### 5. 清理
 - Command Palette: "Tmux Agent: Cleanup Spec"
-- 移除所有 worktrees、关闭 agent 终端
+- 移除所有 worktrees、关闭 agent 终端、终止对应的 tmux 会话
 - 可选：标记 completed 或完全删除
+
+## Agent 终端架构
+
+Agent 终端默认使用 tmux 实现会话持久化，VSCode 终端仅作为 tmux 会话的附着窗口。
+
+```
+启动/切换 Spec
+    ↓
+VSCode 终端存活? ──yes──→ 直接显示
+    │ no
+    ↓
+销毁其他 Spec 的 VSCode 终端
+    ↓
+tmux 可用? ──no──→ 创建普通 VSCode 终端 + 发送 agent 命令（回退模式）
+    │ yes
+    ↓
+tmux 会话 ta-<spec> 存在? ──no──→ tmux new-session + send-keys agent 命令
+    │ yes                              ↓
+    ↓                             VSCode 终端 attach
+VSCode 终端 attach (上下文保留)
+```
+
+- **关闭 VSCode 终端**: 仅 detach，tmux 会话和 ducc 进程继续运行
+- **关闭 VSCode 窗口**: tmux 会话不受影响，下次打开自动 reattach
+- **删除/清理 Spec**: `tmux kill-session` 终止会话，确保无残留
 
 ## 数据存储
 
@@ -59,5 +86,6 @@ tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（S
 - TypeScript + VSCode Extension API
 - js-yaml (YAML 读写)
 - git CLI (worktree 操作)
+- tmux (Agent 会话持久化，可选)
 - VSCode Webview (创建表单)
 - VSCode TreeView (侧边栏)

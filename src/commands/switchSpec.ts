@@ -8,6 +8,7 @@ import { SpecTreeItem } from '../views/specTreeProvider';
 
 export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disposable {
   return vscode.commands.registerCommand('tmuxAgent.switchSpec', async (item?: SpecTreeItem) => {
+    console.log('[tmux-agent:switchSpec] command triggered, item:', item instanceof SpecTreeItem ? item.spec.name : typeof item);
     let specName: string | undefined;
 
     if (item instanceof SpecTreeItem) {
@@ -36,17 +37,25 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
       specName = selected.specName;
     }
 
+    console.log(`[tmux-agent:switchSpec] specName="${specName}"`);
     const spec = loadSpec(specName);
     if (!spec) {
       vscode.window.showErrorMessage(`Spec "${specName}" not found.`);
       return;
     }
 
+    // Persist active spec FIRST — if the extension host restarts after
+    // workspace folder changes, the activation code must see the new spec.
+    await setActiveSpecName(spec.name);
+    console.log('[tmux-agent:switchSpec] active spec set');
+
     // Apply git isolation settings BEFORE modifying workspace folders
     await applyGitIsolationSettings();
+    console.log('[tmux-agent:switchSpec] git isolation applied');
 
-    // Switch workspace folders in-place (no reload, terminals stay alive!)
+    // Switch workspace folders (may trigger extension host restart in some IDEs)
     const success = switchWorkspaceFolders(spec);
+    console.log(`[tmux-agent:switchSpec] switchWorkspaceFolders=${success}`);
     if (!success) {
       vscode.window.showErrorMessage('Failed to switch workspace folders.');
       return;
@@ -54,14 +63,17 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
 
     // Refresh Git SCM view to match new spec's worktrees
     await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
-
-    // Update active spec in state
-    await setActiveSpecName(spec.name);
+    console.log('[tmux-agent:switchSpec] git repos refreshed');
 
     // Launch agent terminal for the new spec
-    launchAgentTerminal(spec);
+    try {
+      launchAgentTerminal(spec);
+    } catch (e) {
+      console.error('[tmux-agent] launchAgentTerminal failed in switchSpec:', e);
+    }
 
     refreshViews();
     vscode.window.showInformationMessage(`Switched to spec "${spec.name}".`);
+    console.log('[tmux-agent:switchSpec] done');
   });
 }

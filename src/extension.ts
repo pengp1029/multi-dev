@@ -64,7 +64,11 @@ export function activate(context: vscode.ExtensionContext) {
       // Sync Git SCM view after Git extension is ready
       setTimeout(async () => {
         await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
-        launchAgentTerminal(spec);
+        try {
+          launchAgentTerminal(spec);
+        } catch (e) {
+          console.error('[tmux-agent] launchAgentTerminal failed on activation:', e);
+        }
       }, 2000);
     }
   }

@@ -12,6 +12,7 @@ tmux-agent 是一个 VSCode 扩展，用于管理开发任务（Spec）。每个
 | TypeScript | ^5.3.0 | 开发语言 |
 | js-yaml | ^4.1.0 | Spec 配置序列化/反序列化 |
 | git worktree | — | 分支隔离开发 |
+| tmux | — | Agent 会话持久化（可选，未安装时回退到普通终端） |
 
 ## 项目结构
 
@@ -78,10 +79,14 @@ commands/*.ts (命令处理)
     ↓
 ┌─────────┬──────────────┬───────────────┬──────────────┬──────────┐
 │ store.ts│ gitOps.ts    │workspaceOps.ts│terminalOps.ts│ gitScm.ts│
-│(YAML IO)│(git worktree)│(文件夹管理)    │(终端管理)     │(SCM 视图) │
+│(YAML IO)│(git worktree)│(文件夹管理)    │(tmux 会话管理)│(SCM 视图) │
 └─────────┴──────────────┴───────────────┴──────────────┴──────────┘
     ↓                                          ↓              ↓
-~/.tmux-agent/specs/     VSCode workspace API + Terminal API  Git Extension API
+~/.tmux-agent/specs/     VSCode workspace API  │         Git Extension API
+                                               ↓
+                                  tmux CLI (execFileSync)
+                                     ↕ attach/detach
+                                  VSCode Terminal API
 ```
 
 ## 模块职责
@@ -102,7 +107,7 @@ commands/*.ts (命令处理)
 | `gitOps.ts` | git worktree 增删、状态查询、提交、分支检测等 |
 | `gitScm.ts` | 通过 VSCode Git 扩展 API 管理 SCM 视图中的仓库开关，确保只显示当前 Spec 的仓库 |
 | `workspaceOps.ts` | `.code-workspace` 生成、workspace 文件夹动态增删切换、git 隔离设置 |
-| `terminalOps.ts` | Agent 终端创建/销毁/生命周期追踪 |
+| `terminalOps.ts` | Agent 终端生命周期管理：优先通过 tmux 会话（`ta-<specName>`）持久化 ducc 进程，VSCode 终端仅作为附着窗口；tmux 不可用时回退到普通终端。使用 `execFileSync` 调用 tmux CLI 管理会话生命周期 |
 
 ### 视图模块
 
