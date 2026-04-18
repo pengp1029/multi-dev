@@ -284,6 +284,54 @@ setTimeout(async () => {
 
 ---
 
+## Bug 11: Active Spec 在 workspace 文件重载后丢失
+
+**现象**: 创建/启动 Spec 后窗口重新加载（通过 `vscode.openFolder` 打开 `.code-workspace` 文件），"Current Spec" 侧边栏显示为空，扩展不知道当前哪个 Spec 处于激活状态。
+
+**原因**: `getActiveSpecName()` 只从 `workspaceState` 读取，而 `workspaceState` 是 per-workspace 的。当通过 `vscode.openFolder` 打开 `.code-workspace` 文件时，VS Code 创建了一个全新的 workspace context，其 `workspaceState` 是空的——之前通过 `setActiveSpecName()` 写入的值随旧 workspace 一起丢失。
+
+**修复**:
+- `getActiveSpecName()` 增加 fallback 逻辑：当 `workspaceState` 无值时，从 `vscode.workspace.getConfiguration()` 读取 `tmuxAgent.activeSpec`
+- 该配置值由 `generateWorkspaceFile()` 写入 `.code-workspace` 文件的 `settings` 字段中，因此通过 workspace 文件打开时总能读到
+
+**代码** (`src/state.ts`):
+```typescript
+export function getActiveSpecName(): string | undefined {
+  // Try workspaceState first (set during this session)
+  const fromState = _context?.workspaceState.get<string>('tmuxAgent.activeSpec');
+  if (fromState) { return fromState; }
+  // Fall back to workspace settings (written into .code-workspace file by generateWorkspaceFile)
+  return vscode.workspace.getConfiguration().get<string>('tmuxAgent.activeSpec');
+}
+```
+
+---
+
+## Bug 12: switchWorkspaceFolders 对无变化操作返回 false
+
+**现象**: 切换到当前已激活的 Spec 时报错 "Failed to switch workspace folders"。
+
+**原因**: 当通过 `.code-workspace` 文件打开时，workspace 文件夹已经是正确的。`switchWorkspaceFolders()` 尝试用相同的文件夹替换相同的文件夹，`updateWorkspaceFolders()` 对这种无变化操作返回 `false`，上层代码将其视为失败。
+
+**修复**:
+- 在调用 `updateWorkspaceFolders` 之前，检测当前 managed 文件夹是否已与目标匹配
+- 如果 managed 文件夹数量相同且每个路径一一对应，则直接返回 `true`，跳过无意义的 API 调用
+
+**代码** (`src/workspaceOps.ts`):
+```typescript
+// If the managed folders already match the target, skip the no-op call —
+// updateWorkspaceFolders returns false when nothing changes.
+if (deleteCount === newFolders.length) {
+  const managedFolders = managedIndices.map(i => folders[i]);
+  const alreadyMatch = newFolders.every((nf, idx) =>
+    managedFolders[idx].uri.fsPath === nf.uri.fsPath,
+  );
+  if (alreadyMatch) { return true; }
+}
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API
@@ -294,6 +342,12 @@ setTimeout(async () => {
 4. **返回 false 不代表异步失败** — 是同步返回的操作结果
 5. **返回 true 不代表变更已生效** — 必须监听 `onDidChangeWorkspaceFolders` 事件确认 folder 变更完成后，才能安全调用依赖 workspace folder 的 API
 6. **调用后可能触发扩展宿主重启** — 后续代码可能不执行；需要在调用前完成关键状态持久化和 UI 刷新
+7. **无变化操作返回 false** — 当新旧文件夹完全相同时，API 返回 `false`；需在调用前检测并短路，避免误判为失败
+
+### VSCode `workspaceState`
+
+1. **per-workspace 作用域** — `workspaceState` 绑定到当前 workspace，通过 `vscode.openFolder` 打开新的 `.code-workspace` 文件后，`workspaceState` 是全新的空状态
+2. **需要持久化 fallback** — 关键状态不能只存 `workspaceState`，应同时写入 `.code-workspace` settings 作为兜底，通过 `vscode.workspace.getConfiguration()` 读取
 
 ### VSCode Webview
 

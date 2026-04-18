@@ -7,7 +7,11 @@ export function initState(context: vscode.ExtensionContext): void {
 }
 
 export function getActiveSpecName(): string | undefined {
-  return _context?.workspaceState.get<string>('tmuxAgent.activeSpec');
+  // Try workspaceState first (set during this session)
+  const fromState = _context?.workspaceState.get<string>('tmuxAgent.activeSpec');
+  if (fromState) { return fromState; }
+  // Fall back to workspace settings (written into .code-workspace file by generateWorkspaceFile)
+  return vscode.workspace.getConfiguration().get<string>('tmuxAgent.activeSpec');
 }
 
 export async function setActiveSpecName(name: string | undefined): Promise<void> {

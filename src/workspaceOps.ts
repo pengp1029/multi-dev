@@ -70,6 +70,17 @@ export function switchWorkspaceFolders(spec: Spec): boolean {
     // allow multiple successive calls without waiting for the event.
     const start = managedIndices[0];
     const deleteCount = managedIndices.length;
+
+    // If the managed folders already match the target, skip the no-op call —
+    // updateWorkspaceFolders returns false when nothing changes.
+    if (deleteCount === newFolders.length) {
+      const managedFolders = managedIndices.map(i => folders[i]);
+      const alreadyMatch = newFolders.every((nf, idx) =>
+        managedFolders[idx].uri.fsPath === nf.uri.fsPath,
+      );
+      if (alreadyMatch) { return true; }
+    }
+
     return vscode.workspace.updateWorkspaceFolders(start, deleteCount, ...newFolders);
   }
 
