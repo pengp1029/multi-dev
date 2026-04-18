@@ -4,6 +4,7 @@ import { setActiveSpecName } from '../state';
 import { createWorktree } from '../gitOps';
 import { generateWorkspaceFile, addSpecFoldersToWorkspace, applyGitIsolationSettings } from '../workspaceOps';
 import { launchAgentTerminal } from '../terminalOps';
+import { refreshGitRepositories } from '../gitScm';
 import { SpecTreeItem } from '../views/specTreeProvider';
 
 export function registerStartSpecCommand(refreshViews: () => void): vscode.Disposable {
@@ -49,6 +50,9 @@ export function registerStartSpecCommand(refreshViews: () => void): vscode.Dispo
 
       // Add spec folders to workspace (no reload!)
       addSpecFoldersToWorkspace(spec);
+
+      // Refresh Git SCM view to show new spec's worktrees
+      await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
 
       // Update active spec state
       await setActiveSpecName(spec.name);

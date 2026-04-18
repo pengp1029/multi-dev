@@ -29,6 +29,7 @@ tmux-agent/
 │   ├── state.ts              # 全局状态管理 (workspaceState)
 │   ├── store.ts              # Spec YAML CRUD (js-yaml)
 │   ├── gitOps.ts             # git worktree 操作封装
+│   ├── gitScm.ts             # VSCode Git SCM 视图管理 (开/关仓库)
 │   ├── workspaceOps.ts       # workspace 文件夹动态管理 + git 隔离
 │   ├── terminalOps.ts        # Agent 终端生命周期管理
 │   ├── views/
@@ -75,12 +76,12 @@ tmux-agent/
     ↓
 commands/*.ts (命令处理)
     ↓
-┌─────────┬──────────────┬───────────────┬──────────────┐
-│ store.ts│ gitOps.ts    │workspaceOps.ts│terminalOps.ts│
-│(YAML IO)│(git worktree)│(文件夹管理)    │(终端管理)     │
-└─────────┴──────────────┴───────────────┴──────────────┘
-    ↓                                          ↓
-~/.tmux-agent/specs/     VSCode workspace API + Terminal API
+┌─────────┬──────────────┬───────────────┬──────────────┬──────────┐
+│ store.ts│ gitOps.ts    │workspaceOps.ts│terminalOps.ts│ gitScm.ts│
+│(YAML IO)│(git worktree)│(文件夹管理)    │(终端管理)     │(SCM 视图) │
+└─────────┴──────────────┴───────────────┴──────────────┴──────────┘
+    ↓                                          ↓              ↓
+~/.tmux-agent/specs/     VSCode workspace API + Terminal API  Git Extension API
 ```
 
 ## 模块职责
@@ -99,6 +100,7 @@ commands/*.ts (命令处理)
 | 模块 | 职责 |
 |------|------|
 | `gitOps.ts` | git worktree 增删、状态查询、提交、分支检测等 |
+| `gitScm.ts` | 通过 VSCode Git 扩展 API 管理 SCM 视图中的仓库开关，确保只显示当前 Spec 的仓库 |
 | `workspaceOps.ts` | `.code-workspace` 生成、workspace 文件夹动态增删切换、git 隔离设置 |
 | `terminalOps.ts` | Agent 终端创建/销毁/生命周期追踪 |
 

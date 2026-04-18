@@ -3,6 +3,7 @@ import { listSpecs, loadSpec } from '../store';
 import { getActiveSpecName, setActiveSpecName } from '../state';
 import { switchWorkspaceFolders, applyGitIsolationSettings } from '../workspaceOps';
 import { launchAgentTerminal } from '../terminalOps';
+import { refreshGitRepositories } from '../gitScm';
 import { SpecTreeItem } from '../views/specTreeProvider';
 
 export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disposable {
@@ -50,6 +51,9 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
       vscode.window.showErrorMessage('Failed to switch workspace folders.');
       return;
     }
+
+    // Refresh Git SCM view to match new spec's worktrees
+    await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
 
     // Update active spec in state
     await setActiveSpecName(spec.name);

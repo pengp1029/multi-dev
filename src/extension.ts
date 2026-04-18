@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { ensureDirs } from './config';
 import { initState, getActiveSpecName } from './state';
 import { loadSpec } from './store';
+import { switchWorkspaceFolders, applyGitIsolationSettings } from './workspaceOps';
+import { refreshGitRepositories } from './gitScm';
 import { launchAgentTerminal, registerTerminalCloseHandler } from './terminalOps';
 import { CurrentSpecTreeProvider, AllSpecsTreeProvider } from './views/specTreeProvider';
 import { registerCreateSpecCommand } from './commands/createSpec';
@@ -49,12 +51,19 @@ export function activate(context: vscode.ExtensionContext) {
   // --- Terminal lifecycle ---
   registerTerminalCloseHandler(context);
 
-  // --- Auto-launch agent terminal if active spec exists ---
+  // --- Auto-sync workspace folders and Git SCM for active spec ---
   const activeSpecName = getActiveSpecName();
   if (activeSpecName) {
     const spec = loadSpec(activeSpecName);
     if (spec && spec.status === 'active') {
-      setTimeout(() => {
+      // Ensure workspace folders match current spec (clean up stale folders from other specs)
+      applyGitIsolationSettings().then(() => {
+        switchWorkspaceFolders(spec);
+      });
+
+      // Sync Git SCM view after Git extension is ready
+      setTimeout(async () => {
+        await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
         launchAgentTerminal(spec);
       }, 2000);
     }

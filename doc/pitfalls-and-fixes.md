@@ -120,6 +120,72 @@ if (uris && uris.length > 0) {
 
 ---
 
+## Bug 7: 切换 Spec 后 Git SCM 视图未更新
+
+**现象**: 切换到另一个 Spec 后，左侧 Git Source Control 视图仍显示旧 Spec 的仓库。
+
+**原因**: `switchWorkspaceFolders()` 只替换了 workspace 文件夹，但未主动通知 VSCode Git 扩展关闭旧仓库/打开新仓库。扩展完全依赖 Git 扩展被动检测 workspace folder 变化，但 `git.openRepositoryInParentFolders: "never"` 隔离设置阻止了 Git 扩展自动发现新仓库。
+
+**修复**:
+- 新增 `gitScm.ts` 模块，通过 `vscode.extensions.getExtension('vscode.git')` 获取 Git 扩展 API
+- `refreshGitRepositories(newPaths)`: 先用 `git.close` 关闭不属于新 Spec 的旧仓库，再用 `api.openRepository()` 打开新仓库
+- 在 `switchSpec.ts` 和 `startSpec.ts` 的 workspace folder 切换后调用
+- `package.json` 添加 `extensionDependencies: ["vscode.git"]` 确保 Git 扩展先激活
+
+**代码** (`gitScm.ts`):
+```typescript
+export async function refreshGitRepositories(newPaths: string[]): Promise<void> {
+  const api = await getGitAPI();
+  if (!api) { return; }
+  const newPathSet = new Set(newPaths);
+  // Close stale repos
+  for (const repo of [...api.repositories]) {
+    if (!newPathSet.has(repo.rootUri.fsPath)) {
+      await vscode.commands.executeCommand('git.close', repo.rootUri);
+    }
+  }
+  // Open new repos
+  for (const p of newPaths) {
+    if (!openPaths.has(p)) {
+      await api.openRepository(vscode.Uri.file(p));
+    }
+  }
+}
+```
+
+---
+
+## Bug 8: 扩展激活时 Git SCM 显示所有 Spec 的仓库
+
+**现象**: 默认选择了一个 Spec，但 Git SCM 视图显示了全部 Spec 的仓库（如 test-1 的 wm-dataset + test 的 wm-dataset 同时出现）。
+
+**原因**: `extension.ts` 激活逻辑只启动了 Agent 终端，未调用 `switchWorkspaceFolders()` 清理残留的其他 Spec 文件夹，也未调用 `refreshGitRepositories()` 同步 SCM 视图。上次 VSCode 会话中多个 Spec 的 workspace folders 被持久化，重启后 Git 扩展发现了所有文件夹中的仓库。
+
+**修复**:
+- 激活时如有 active spec，立即调用 `switchWorkspaceFolders()` 清理非当前 Spec 的 managed 文件夹
+- 延迟 2 秒后调用 `refreshGitRepositories()` 确保 Git 扩展只保留当前 Spec 的仓库
+- 同时修复 `gitScm.ts` 中 `git.close` 的参数：传 `repo.rootUri`（Uri 类型）而非 repo 对象
+- `getGitAPI()` 改为异步，Git 扩展未激活时先 `await activate()`
+
+**代码** (`extension.ts`):
+```typescript
+const activeSpecName = getActiveSpecName();
+if (activeSpecName) {
+  const spec = loadSpec(activeSpecName);
+  if (spec && spec.status === 'active') {
+    applyGitIsolationSettings().then(() => {
+      switchWorkspaceFolders(spec);
+    });
+    setTimeout(async () => {
+      await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
+      launchAgentTerminal(spec);
+    }, 2000);
+  }
+}
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API
@@ -134,6 +200,13 @@ if (uris && uris.length > 0) {
 1. **`showOpenDialog` 会让 Webview 失焦** — 发消息前必须 `reveal()`
 2. **`retainContextWhenHidden: true` 保留 JS 状态** — 但消息传递可能受影响
 3. **`postMessage` 返回 `Thenable<boolean>`** — 建议 `await` 确保送达
+
+### VSCode Git Extension API
+
+1. **`git.close` 命令接受 `Uri` 参数** — 传 repo 对象无效，需传 `repo.rootUri`
+2. **Git 扩展可能未激活** — 通过 `extensionDependencies` 声明依赖或在代码中 `await activate()`
+3. **`openRepositoryInParentFolders: "never"` 会阻止自动发现** — 需主动调用 `api.openRepository()` 打开仓库
+4. **workspace folder 变化不等于 SCM 视图更新** — 必须通过 Git API 显式管理仓库
 
 ### Git Worktree
 

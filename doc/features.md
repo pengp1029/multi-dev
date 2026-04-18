@@ -40,9 +40,10 @@
 **流程**:
 1. 应用 git 隔离设置
 2. 原子替换 managed 文件夹（一次 `updateWorkspaceFolders` 调用）
-3. 更新 active spec state
-4. 启动新 Spec 的 Agent 终端
-5. 刷新侧边栏
+3. 通过 Git 扩展 API 关闭旧 Spec 仓库、打开新 Spec 仓库（`refreshGitRepositories`）
+4. 更新 active spec state
+5. 启动新 Spec 的 Agent 终端
+6. 刷新侧边栏
 
 ### 4. 添加 Repo (`tmuxAgent.addRepo`)
 
@@ -113,7 +114,14 @@
 
 - `git.openRepositoryInParentFolders: "never"` — 阻止 VSCode Git 扩展扫描父目录
 - `git.repositoryScanMaxDepth: 1` — 限制扫描深度为根目录
-- 效果：SCM 视图只显示当前 Spec 的 worktree 变更
+
+### 主动 SCM 仓库管理 (`gitScm.ts`)
+
+仅靠 workspace settings 无法保证 SCM 视图正确切换，扩展通过 `vscode.git` API 主动管理：
+
+- **切换/启动 Spec 时**: `refreshGitRepositories()` 关闭不属于当前 Spec 的仓库，打开当前 Spec 的仓库
+- **扩展激活时**: 自动同步 workspace folders 和 SCM 仓库到 active spec，清理上次会话残留
+- **依赖声明**: `package.json` 中 `extensionDependencies: ["vscode.git"]` 确保 Git 扩展先于本扩展激活
 
 ## Workspace 文件夹管理策略
 
@@ -143,4 +151,4 @@ workspace 文件夹:
 - CWD：`~/.tmux-agent/worktrees/<specName>/`（Spec 级目录，而非某个 repo）
 - 自动启动：创建/启动/切换 Spec 时自动创建终端并执行 agent 命令
 - 生命周期追踪：`agentTerminals` Map 追踪所有终端，`onDidCloseTerminal` 清理已关闭的
-- 扩展激活时：如有 active spec，延迟 2 秒自动恢复终端
+- 扩展激活时：如有 active spec，同步 workspace folders 并刷新 Git SCM 视图，延迟 2 秒恢复终端
