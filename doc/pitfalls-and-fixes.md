@@ -1,0 +1,143 @@
+# tmux-agent 踩坑记录与 Bug 修复
+
+## Bug 1: 空仓库创建 worktree 失败
+
+**报错**: `fatal: not a valid object name: 'HEAD'`
+
+**原因**: 仓库没有任何 commit（`git init` 后未执行 `git commit`），`git worktree add` 需要一个有效的 HEAD 引用。
+
+**修复**:
+- 新增 `hasCommits()` 检查 HEAD 是否有效
+- 新增 `getRepoRoot()` 解析真实 git 根目录（用户可能选了子目录）
+- 在创建 Spec 和添加 Repo 时前置验证
+
+**代码** (`gitOps.ts`):
+```typescript
+export function hasCommits(repoPath: string): boolean {
+  try {
+    execSync('git rev-parse HEAD', { cwd: repoPath, stdio: 'pipe' });
+    return true;
+  } catch { return false; }
+}
+```
+
+---
+
+## Bug 2: "already checked out" 分支冲突
+
+**报错**: `fatal: 'feat/xxx' is already checked out at '/path/to/repo'`
+
+**原因**: 要创建 worktree 的分支正好是原始仓库当前检出的分支，git 不允许同一分支被两个 worktree 同时检出。
+
+**修复**: 先以 detached HEAD 创建 worktree，再在新 worktree 内 checkout 目标分支。
+
+**代码** (`gitOps.ts`):
+```typescript
+try {
+  execSync(`git worktree add "${worktreePath}" "${branch}"`);
+} catch (e) {
+  if (msg.includes('already checked out')) {
+    execSync(`git worktree add --detach "${worktreePath}"`);
+    execSync(`git checkout "${branch}"`, { cwd: worktreePath });
+  }
+}
+```
+
+---
+
+## Bug 3: 切换 Spec 时终端中断
+
+**报错**: 切换 Spec 后 AI CLI 终端被关闭，对话丢失
+
+**原因**: 最初方案使用 `vscode.commands.executeCommand('vscode.openFolder', wsPath)` 打开 `.code-workspace` 文件，这会重新加载整个 VSCode 窗口，导致所有终端被销毁。
+
+**修复**: 废弃 `openFolder` 方案，改用 `workspace.updateWorkspaceFolders()` 在同一窗口内动态替换文件夹。引入 `state.ts` 用 `context.workspaceState` 追踪 active spec（替代 workspace settings）。
+
+**关键设计**: `isManagedFolder()` 判断哪些文件夹由扩展管理，切换时只替换 managed 文件夹，用户自己的项目文件夹不受影响。
+
+---
+
+## Bug 4: "Failed to switch workspace folders."
+
+**报错**: `Failed to switch workspace folders.`
+
+**原因**: `switchWorkspaceFolders()` 中循环调用 `updateWorkspaceFolders()` 逐个删除文件夹：
+
+```typescript
+// ❌ 错误写法
+for (const idx of managedIndices) {
+  vscode.workspace.updateWorkspaceFolders(idx, 1);  // 第二次调用失败！
+}
+```
+
+VSCode API 规定 `updateWorkspaceFolders()` 不能连续调用，必须等待 `onDidChangeWorkspaceFolders` 事件。
+
+**修复**: 合并为单次原子调用：
+
+```typescript
+// ✅ 正确写法
+const start = managedIndices[0];
+const deleteCount = managedIndices.length;
+return vscode.workspace.updateWorkspaceFolders(start, deleteCount, ...newFolders);
+```
+
+同样修复了 `removeFoldersFromCurrentWorkspace()` 的多次调用问题。
+
+---
+
+## Bug 5: 创建 Spec 时 workspace settings 写入失败
+
+**报错**: `Failed to create spec: 由于该文件具有未保存的更改，因此无法写入到工作区设置。请先保存该工作区设置文件，然后重试。`
+
+**原因**: `addSpecFoldersToWorkspace()` 调用 `updateWorkspaceFolders()` 后，workspace 配置文件被标记为 dirty（未保存）。紧接着 `applyGitIsolationSettings()` 尝试通过 Configuration API 写入同一文件，被 VSCode 拒绝。
+
+**修复**: 调整执行顺序——先写 settings，再改文件夹：
+
+```typescript
+// ✅ 先 settings 再 folders
+await applyGitIsolationSettings();
+addSpecFoldersToWorkspace(spec);
+```
+
+影响文件：`createSpec.ts`, `startSpec.ts`, `switchSpec.ts`
+
+---
+
+## Bug 6: Webview 添加多个仓库只显示一个
+
+**现象**: 在创建 Spec 的 Webview 表单中，点击 Browse 添加第二个仓库后，列表中仍然只显示第一个。
+
+**原因**: `showOpenDialog()` 弹出文件选择对话框时会抢占焦点，Webview 面板退到后台。选择完毕后 `postMessage()` 发给了后台的 Webview，消息未被正确处理。
+
+**修复**: 在 `postMessage` 前先调用 `reveal()` 将 Webview 面板拉回前台：
+
+```typescript
+if (uris && uris.length > 0) {
+  this.panel?.reveal();  // 确保 Webview 在前台
+  await this.panel?.webview.postMessage({ type: 'repoPath', ... });
+}
+```
+
+---
+
+## 踩坑总结
+
+### VSCode `updateWorkspaceFolders()` API
+
+1. **不能连续多次调用** — 必须合并为单次原子操作
+2. **调用后 workspace 配置文件变 dirty** — 后续 Configuration API 写入会失败
+3. **不能删除所有文件夹** — Extension Development Host 的项目文件夹不能被移除
+4. **返回 false 不代表异步失败** — 是同步返回的操作结果
+
+### VSCode Webview
+
+1. **`showOpenDialog` 会让 Webview 失焦** — 发消息前必须 `reveal()`
+2. **`retainContextWhenHidden: true` 保留 JS 状态** — 但消息传递可能受影响
+3. **`postMessage` 返回 `Thenable<boolean>`** — 建议 `await` 确保送达
+
+### Git Worktree
+
+1. **空仓库（无 commits）不能创建 worktree** — 必须前置检查
+2. **分支已 checkout 时不能创建同名 worktree** — 需要 detach 降级方案
+3. **stale worktree 目录需要先 prune** — `git worktree prune` 清理悬挂引用
+4. **用户选择的路径可能不是 repo 根目录** — 用 `git rev-parse --show-toplevel` 解析

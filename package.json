@@ -1,0 +1,139 @@
+{
+  "name": "tmux-agent",
+  "displayName": "Tmux Agent - Spec Manager",
+  "description": "Manage development specs with git worktree isolation and AI agent integration",
+  "version": "0.1.0",
+  "publisher": "tmux-agent",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tmux-agent",
+          "title": "Tmux Agent",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "tmux-agent": [
+        {
+          "id": "tmuxAgentCurrentSpec",
+          "name": "Current Spec"
+        },
+        {
+          "id": "tmuxAgentAllSpecs",
+          "name": "All Specs"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "tmuxAgent.createSpec",
+        "title": "Tmux Agent: Create Spec",
+        "icon": "$(add)"
+      },
+      {
+        "command": "tmuxAgent.startSpec",
+        "title": "Tmux Agent: Start Spec",
+        "icon": "$(play)"
+      },
+      {
+        "command": "tmuxAgent.switchSpec",
+        "title": "Tmux Agent: Switch Spec",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "tmuxAgent.addRepo",
+        "title": "Tmux Agent: Add Repo",
+        "icon": "$(repo)"
+      },
+      {
+        "command": "tmuxAgent.commitSpec",
+        "title": "Tmux Agent: Commit All",
+        "icon": "$(check)"
+      },
+      {
+        "command": "tmuxAgent.cleanupSpec",
+        "title": "Tmux Agent: Cleanup Spec",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "tmuxAgent.deleteSpec",
+        "title": "Tmux Agent: Delete Spec",
+        "icon": "$(close)"
+      },
+      {
+        "command": "tmuxAgent.refreshSpecs",
+        "title": "Tmux Agent: Refresh",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "tmuxAgent.createSpec",
+          "when": "view == tmuxAgentAllSpecs",
+          "group": "navigation"
+        },
+        {
+          "command": "tmuxAgent.refreshSpecs",
+          "when": "view == tmuxAgentAllSpecs",
+          "group": "navigation"
+        },
+        {
+          "command": "tmuxAgent.addRepo",
+          "when": "view == tmuxAgentCurrentSpec",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "tmuxAgent.startSpec",
+          "when": "view == tmuxAgentAllSpecs && viewItem == spec",
+          "group": "inline"
+        },
+        {
+          "command": "tmuxAgent.switchSpec",
+          "when": "view == tmuxAgentAllSpecs && viewItem == specInactive",
+          "group": "inline"
+        },
+        {
+          "command": "tmuxAgent.deleteSpec",
+          "when": "view == tmuxAgentAllSpecs && viewItem =~ /spec.*/",
+          "group": "inline"
+        },
+        {
+          "command": "tmuxAgent.commitSpec",
+          "when": "view == tmuxAgentCurrentSpec && viewItem == specActive"
+        },
+        {
+          "command": "tmuxAgent.cleanupSpec",
+          "when": "view == tmuxAgentCurrentSpec && viewItem == specActive"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}
