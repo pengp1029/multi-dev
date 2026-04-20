@@ -13,7 +13,9 @@ export function registerCreateSpecCommand(
   context: vscode.ExtensionContext,
   refreshViews: () => void,
 ): vscode.Disposable {
-  return vscode.commands.registerCommand('tmuxAgent.createSpec', () => {
+  console.log('[tmux-agent] Registering command: tmuxAgent.createSpec');
+  const disposable = vscode.commands.registerCommand('tmuxAgent.createSpec', () => {
+    console.log('[tmux-agent] Command tmuxAgent.createSpec executed');
     const webview = new SpecWebviewProvider(
       context.extensionUri,
       async (data: CreateSpecData) => {
@@ -28,6 +30,7 @@ export function registerCreateSpecCommand(
     );
     webview.showCreateSpecForm();
   });
+  return disposable;
 }
 
 async function createSpecFromData(data: CreateSpecData, refreshViews: () => void): Promise<void> {

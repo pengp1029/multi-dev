@@ -3,4 +3,6 @@
 src/**
 .gitignore
 tsconfig.json
+# Exclude node_modules except js-yaml
 node_modules/**
+!node_modules/js-yaml/**

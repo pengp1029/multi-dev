@@ -10,9 +10,8 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
-  "extensionDependencies": [
-    "vscode.git"
+  "activationEvents": [
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {

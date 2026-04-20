@@ -175,6 +175,7 @@ export function getWorktreeStatus(worktreePath: string): WorktreeStatus {
     const output = execSync('git status --porcelain', {
       cwd: worktreePath,
       encoding: 'utf-8',
+      timeout: 5000, // 5 second timeout
     });
     const lines = output.trim().split('\n').filter(l => l.length > 0);
     let staged = 0;

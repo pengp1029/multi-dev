@@ -15,11 +15,15 @@ import { registerCleanupSpecCommand } from './commands/cleanupSpec';
 import { registerDeleteSpecCommand } from './commands/deleteSpec';
 
 export function activate(context: vscode.ExtensionContext) {
+  console.log('[tmux-agent] Extension activating...');
+  console.log('[tmux-agent] Extension path:', context.extensionPath);
+
   // Initialize global state
   initState(context);
 
   // Ensure storage directories exist
   ensureDirs();
+  console.log('[tmux-agent] Directories ensured');
 
   // --- TreeView Providers ---
   const currentSpecProvider = new CurrentSpecTreeProvider();
@@ -37,6 +41,7 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   // --- Register Commands ---
+  console.log('[tmux-agent] Registering commands...');
   context.subscriptions.push(
     registerCreateSpecCommand(context, refreshViews),
     registerStartSpecCommand(refreshViews),
@@ -47,6 +52,7 @@ export function activate(context: vscode.ExtensionContext) {
     registerDeleteSpecCommand(refreshViews),
     vscode.commands.registerCommand('tmuxAgent.refreshSpecs', refreshViews),
   );
+  console.log('[tmux-agent] Commands registered successfully');
 
   // --- Terminal lifecycle ---
   registerTerminalCloseHandler(context);
