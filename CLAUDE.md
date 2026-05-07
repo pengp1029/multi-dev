@@ -96,3 +96,15 @@
 - 所有 md 文档保存在 `doc/` 目录下
 - 遵循 `doc/conventions.md` 中的命名和模式约定
 - 修改代码前先读取目标文件，理解上下文
+
+## 构建 .vsix
+
+```bash
+# 编译 TypeScript
+npm run compile
+
+# 打包为 .vsix（需要全局安装 vsce: npm i -g @vscode/vsce）
+vsce package
+```
+
+生成的 `.vsix` 文件在项目根目录，可通过 `code --install-extension tmux-agent-*.vsix` 安装。
