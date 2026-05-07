@@ -58,6 +58,51 @@ export function branchExists(repoPath: string, branch: string): boolean {
 }
 
 /**
+ * Check if a branch exists on any remote (e.g. origin/<branch>).
+ * Returns the full remote ref (e.g. "origin/feat/foo") or undefined.
+ */
+export function remoteBranchExists(repoPath: string, branch: string): string | undefined {
+  try {
+    const output = execSync(`git branch -r --list "*/${branch}"`, {
+      cwd: repoPath,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    }).trim();
+    if (output) {
+      // Return the first matching remote ref (e.g. "origin/feat/foo")
+      return output.split('\n')[0].trim();
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Fetch a specific branch from its remote.
+ */
+export function fetchBranch(repoPath: string, branch: string): void {
+  try {
+    execSync(`git fetch origin "${branch}"`, {
+      cwd: repoPath,
+      stdio: 'pipe',
+      timeout: 30000,
+    });
+  } catch {
+    // Try fetching from all remotes if origin fails
+    try {
+      execSync(`git fetch --all`, {
+        cwd: repoPath,
+        stdio: 'pipe',
+        timeout: 30000,
+      });
+    } catch {
+      // best effort
+    }
+  }
+}
+
+/**
  * Check if a worktree already exists at the given path.
  */
 export function worktreeExists(originPath: string, worktreePath: string): boolean {
@@ -109,7 +154,7 @@ export function createWorktree(originPath: string, worktreePath: string, branch:
   }
 
   if (branchExists(repoRoot, branch)) {
-    // Branch exists — check if it's already checked out in another worktree
+    // Branch exists locally — check if it's already checked out in another worktree
     try {
       execSync(`git worktree add "${worktreePath}" "${branch}"`, {
         cwd: repoRoot,
@@ -133,11 +178,36 @@ export function createWorktree(originPath: string, worktreePath: string, branch:
       }
     }
   } else {
-    // Create new branch based on current HEAD
-    execSync(`git worktree add -b "${branch}" "${worktreePath}"`, {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
+    // Branch doesn't exist locally — check if it exists on a remote
+    const remoteRef = remoteBranchExists(repoRoot, branch);
+    if (remoteRef) {
+      // Fetch the branch from remote, then create worktree tracking it
+      fetchBranch(repoRoot, branch);
+      // After fetch, the local tracking branch should be creatable
+      try {
+        execSync(`git worktree add --track -b "${branch}" "${worktreePath}" "${remoteRef}"`, {
+          cwd: repoRoot,
+          stdio: 'pipe',
+        });
+      } catch {
+        // Fallback: if --track fails, try creating from the remote ref directly
+        execSync(`git worktree add "${worktreePath}" "${remoteRef}"`, {
+          cwd: repoRoot,
+          stdio: 'pipe',
+        });
+        // Create local branch tracking the remote
+        execSync(`git checkout -b "${branch}" --track "${remoteRef}"`, {
+          cwd: worktreePath,
+          stdio: 'pipe',
+        });
+      }
+    } else {
+      // Branch doesn't exist anywhere — create new branch based on current HEAD
+      execSync(`git worktree add -b "${branch}" "${worktreePath}"`, {
+        cwd: repoRoot,
+        stdio: 'pipe',
+      });
+    }
   }
 }
 

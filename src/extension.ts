@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { ensureDirs } from './config';
-import { initState, getActiveSpecName } from './state';
+import { initState, getActiveSpecName, setActiveSpecName } from './state';
 import { loadSpec } from './store';
-import { switchWorkspaceFolders, applyGitIsolationSettings } from './workspaceOps';
+import { switchWorkspaceFolders, applyGitIsolationSettings, isInManagedWorkspaceFile } from './workspaceOps';
 import { refreshGitRepositories, startRepoGuard } from './gitScm';
 import { launchAgentTerminal, registerTerminalCloseHandler } from './terminalOps';
 import { CurrentSpecTreeProvider, AllSpecsTreeProvider } from './views/specTreeProvider';
@@ -61,8 +61,10 @@ export function activate(context: vscode.ExtensionContext) {
   startRepoGuard(context);
 
   // --- Auto-sync workspace folders and Git SCM for active spec ---
+  // Only restore spec state when inside a managed .code-workspace file.
+  // If the user opened a different folder/workspace, do NOT override it.
   const activeSpecName = getActiveSpecName();
-  if (activeSpecName) {
+  if (activeSpecName && isInManagedWorkspaceFile()) {
     const spec = loadSpec(activeSpecName);
     if (spec && spec.status === 'active') {
       // Sync workspace folders in-place for the active spec.
@@ -83,6 +85,10 @@ export function activate(context: vscode.ExtensionContext) {
         refreshViews();
       }, 2000);
     }
+  } else if (activeSpecName && !isInManagedWorkspaceFile()) {
+    // User opened a different folder/workspace — clear stale active spec
+    // from workspaceState so the repo guard doesn't block repos.
+    setActiveSpecName(undefined);
   }
 }
 

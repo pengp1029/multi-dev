@@ -377,6 +377,86 @@ if (isInWorkspaceFile(spec.name)) {
 
 ---
 
+## Bug 14: 远程分支未 fetch 导致 worktree 创建为新分支
+
+**现象**: 用户输入一个远程已有的分支名（如 `feat/login`），创建 Spec 后 worktree 内的代码是从 HEAD 新建的空分支，而非远程分支的内容。
+
+**原因**: `createWorktree()` 中只检查了本地是否存在该分支（`git rev-parse --verify`），如果本地不存在就直接用 `git worktree add -b` 从当前 HEAD 创建新分支。完全忽略了分支可能存在于 remote 的情况——用户 clone 后未 fetch 所有分支，或队友新推了分支但本地还没有。
+
+**修复**:
+- 新增 `remoteBranchExists(repoPath, branch)` 函数，通过 `git branch -r --list "*/<branch>"` 检查远程是否存在该分支
+- 新增 `fetchBranch(repoPath, branch)` 函数，先尝试 `git fetch origin "<branch>"`，失败则 fallback 到 `git fetch --all`
+- `createWorktree()` 在本地分支不存在时，先调用 `remoteBranchExists()` 检查远程；如存在则 fetch 后创建 tracking worktree
+
+**代码** (`src/gitOps.ts`):
+```typescript
+export function remoteBranchExists(repoPath: string, branch: string): string | undefined {
+  try {
+    const output = execSync(`git branch -r --list "*/${branch}"`, {
+      cwd: repoPath,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    }).trim();
+    if (output) {
+      return output.split('\n')[0].trim();
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// In createWorktree(), when branch doesn't exist locally:
+const remoteRef = remoteBranchExists(repoRoot, branch);
+if (remoteRef) {
+  fetchBranch(repoRoot, branch);
+  execSync(`git worktree add --track -b "${branch}" "${worktreePath}" "${remoteRef}"`, {
+    cwd: repoRoot, stdio: 'pipe',
+  });
+} else {
+  // Branch doesn't exist anywhere — create new branch based on current HEAD
+  execSync(`git worktree add -b "${branch}" "${worktreePath}"`, { cwd: repoRoot, stdio: 'pipe' });
+}
+```
+
+---
+
+## Bug 15: 工作目录锁定在上一个 Spec 的仓库
+
+**现象**: 用户在 VSCode 中打开一个新文件夹（非扩展管理的 `.code-workspace` 文件），扩展仍然将旧 Spec 的 workspace folders 应用到当前窗口，且 repo guard 阻止了用户自己的仓库（关闭非 Spec 管理的 Git 仓库）。
+
+**原因**: `extension.ts` 激活时读取 `workspaceState` 中存储的 `activeSpecName`，无条件执行 `switchWorkspaceFolders(spec)` 和 `refreshGitRepositories()`——即使用户已经离开了管理的 workspace 文件、打开了完全不相关的项目文件夹。`workspaceState` 中的残留值在新窗口中仍可读取（同一 storage key），导致扩展错误地认为当前仍在某个 Spec 的上下文中。
+
+**修复**:
+- 新增 `isInManagedWorkspaceFile()` 检查：验证当前打开的文件是否位于扩展管理的 workspaces 目录且为 `.code-workspace` 文件
+- 激活时仅在 `isInManagedWorkspaceFile()` 返回 true 时才恢复 Spec 状态（sync folders、refresh Git、launch terminal）
+- 当 `activeSpecName` 存在但不在管理的 workspace 文件中时，调用 `setActiveSpecName(undefined)` 清除残留状态，防止 repo guard 误杀用户自己的仓库
+
+**代码** (`src/extension.ts`):
+```typescript
+const activeSpecName = getActiveSpecName();
+if (activeSpecName && isInManagedWorkspaceFile()) {
+  // In a managed workspace — restore spec state normally
+  const spec = loadSpec(activeSpecName);
+  if (spec && spec.status === 'active') {
+    applyGitIsolationSettings().then(() => {
+      switchWorkspaceFolders(spec);
+    });
+    setTimeout(async () => {
+      await refreshGitRepositories(spec.repos.map(r => r.worktreePath));
+      launchAgentTerminal(spec);
+      refreshViews();
+    }, 2000);
+  }
+} else if (activeSpecName && !isInManagedWorkspaceFile()) {
+  // User opened a different folder/workspace — clear stale active spec
+  // from workspaceState so the repo guard doesn't block repos.
+  setActiveSpecName(undefined);
+}
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API
@@ -413,9 +493,15 @@ if (isInWorkspaceFile(spec.name)) {
 1. **禁止写入当前活跃的 workspace 文件** — `fs.writeFileSync` 修改当前打开的 `.code-workspace` 文件会触发 VSCode 自动重载窗口；如果写入发生在 `activate()` 路径中，会形成 写入 → 重载 → activate → 写入 的无限循环
 2. **`generateWorkspaceFile()` 必须在 `isInWorkspaceFile()` 守卫之后** — 仅在即将通过 `openWorkspaceFile()` 打开另一个 workspace 文件时才调用；已在正确 workspace 中时，文件内容已是最新的
 
+### VSCode 扩展激活与状态管理
+
+1. **`workspaceState` 可能跨窗口残留** — 用户打开新文件夹时旧状态可能仍可读取，激活逻辑必须验证当前环境是否匹配存储的状态
+2. **激活时必须检查 workspace 类型** — 使用 `isInManagedWorkspaceFile()` 区分"在管理的 workspace 中"和"在普通文件夹中"，避免对非管理环境施加 Spec 逻辑
+
 ### Git Worktree
 
 1. **空仓库（无 commits）不能创建 worktree** — 必须前置检查
 2. **分支已 checkout 时不能创建同名 worktree** — 需要 detach 降级方案
 3. **stale worktree 目录需要先 prune** — `git worktree prune` 清理悬挂引用
 4. **用户选择的路径可能不是 repo 根目录** — 用 `git rev-parse --show-toplevel` 解析
+5. **本地不存在的分支可能存在于远程** — 创建 worktree 前需 `git branch -r --list` 检查远程分支，存在则 fetch 后创建 tracking worktree，避免从 HEAD 误建空分支
