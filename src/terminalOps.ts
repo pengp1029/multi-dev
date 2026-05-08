@@ -4,6 +4,46 @@ import * as fs from 'fs';
 import { Spec } from './types';
 import { getSpecWorktreeRoot } from './workspaceOps';
 
+/**
+ * Build the system prompt that describes the workspace to the agent.
+ */
+function buildSystemPrompt(spec: Spec, cwd: string): string {
+  const lines: string[] = [
+    'You are working in a tmux-agent managed workspace.',
+    '',
+    `Spec: ${spec.name}`,
+    `Description: ${spec.description}`,
+    `Feature Branch: ${spec.featureBranch}`,
+    `Working Directory: ${cwd}`,
+  ];
+
+  if (spec.repos.length > 0) {
+    lines.push('', 'Repositories in this workspace:');
+    for (const repo of spec.repos) {
+      lines.push(`- ${repo.name}: ${repo.worktreePath}`);
+      lines.push(`  (origin: ${repo.originPath}, branch: ${repo.branch})`);
+    }
+    lines.push('', 'Please search for code within this worktree folder. Do NOT look outside of these paths.');
+  } else {
+    lines.push(
+      '',
+      'No code repositories are configured in this workspace. If you need to work with code, remind the user to add repositories to this spec.',
+    );
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Build the full agent command with --system-prompt appended.
+ */
+function buildAgentCommandWithPrompt(spec: Spec, cwd: string): string {
+  const prompt = buildSystemPrompt(spec, cwd);
+  // Escape single quotes for shell: replace ' with '\''
+  const escaped = prompt.replace(/'/g, "'\\''");
+  return `${spec.agentCommand} --system-prompt $'${escaped.replace(/\n/g, '\\n')}'`;
+}
+
 // Cache tmux availability check
 let _tmuxAvailable: boolean | null = null;
 
@@ -49,9 +89,10 @@ function tmuxSessionExists(sessionName: string): boolean {
   }
 }
 
-function createTmuxSession(sessionName: string, cwd: string, agentCommand: string): void {
+function createTmuxSession(sessionName: string, cwd: string, spec: Spec): void {
   execFileSync('tmux', ['new-session', '-d', '-s', sessionName, '-c', cwd]);
-  execFileSync('tmux', ['send-keys', '-t', sessionName, agentCommand, 'Enter']);
+  const fullCommand = buildAgentCommandWithPrompt(spec, cwd);
+  execFileSync('tmux', ['send-keys', '-t', sessionName, fullCommand, 'Enter']);
 }
 
 function killTmuxSession(sessionName: string): void {
@@ -196,7 +237,7 @@ function launchWithTmux(spec: Spec, cwd: string): vscode.Terminal {
 
   // Ensure tmux session exists for the target spec
   if (!tmuxSessionExists(sessionName)) {
-    createTmuxSession(sessionName, cwd, spec.agentCommand);
+    createTmuxSession(sessionName, cwd, spec);
     log(`created tmux session ${sessionName}`);
   }
 
@@ -254,7 +295,7 @@ function launchWithoutTmux(spec: Spec, cwd: string): vscode.Terminal {
     cwd,
   });
   agentTerminal.show();
-  agentTerminal.sendText(spec.agentCommand);
+  agentTerminal.sendText(buildAgentCommandWithPrompt(spec, cwd));
   currentTmuxSession = undefined;
   return agentTerminal;
 }

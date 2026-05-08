@@ -154,6 +154,19 @@ workspace 文件夹:
 - 生命周期追踪：`agentTerminals` Map 追踪所有终端，`onDidCloseTerminal` 清理已关闭的
 - 扩展激活时：如有 active spec，同步 workspace folders 并刷新 Git SCM 视图，延迟 2 秒恢复终端
 
+### 系统 Prompt 注入
+
+Agent 启动时自动通过 `--system-prompt` 命令行参数注入 workspace 上下文信息，使 agent 了解当前工作环境。
+
+**注入内容**:
+- Spec 名称、描述、feature branch
+- 工作目录路径
+- 所有仓库列表（名称、worktree 路径、origin 路径、分支）
+- 指令：在 worktree 文件夹内搜索代码
+- 若无仓库：提醒用户添加代码仓库
+
+**实现位置**: `src/terminalOps.ts` — `buildSystemPrompt()` + `buildAgentCommandWithPrompt()`
+
 ### tmux 会话持久化
 
 Agent 终端默认运行在 tmux 会话中，实现跨切换和重启的上下文持久化。
