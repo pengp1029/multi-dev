@@ -15,9 +15,8 @@
    - 保存 Spec YAML 配置
    - 生成 `.code-workspace` 文件
    - 应用 git 隔离设置
-   - 通过 `vscode.openFolder` 打开 `.code-workspace` 文件（窗口重新加载）
-   - 设为活跃 Spec
-   - 激活时自动恢复：同步 workspace 文件夹、Git SCM 视图、启动 Agent 终端
+   - 刷新侧边栏视图（新 Spec 出现在 All Specs 列表中）
+   - **不会自动切换到新 Spec**，用户可通过 All Specs 视图手动切换
 
 ### 2. 启动 Spec (`tmuxAgent.startSpec`)
 
@@ -140,7 +139,8 @@ workspace 文件夹:
 
 | 场景 | 函数 | 策略 |
 |------|------|------|
-| 首次创建/启动 | `openWorkspaceFile()` | 打开 `.code-workspace` 文件（窗口重新加载） |
+| 首次启动 | `openWorkspaceFile()` | 打开 `.code-workspace` 文件（窗口重新加载） |
+| 首次创建 | `refreshViews()` | 刷新侧边栏视图，不切换窗口 |
 | 切换 Spec（已在 workspace 文件中） | `switchWorkspaceFolders()` | 原子替换 managed 文件夹 |
 | 切换 Spec（不在 workspace 文件中） | `openWorkspaceFile()` | 打开 `.code-workspace` 文件（窗口重新加载） |
 | 添加单个 Repo | `addFolderToCurrentWorkspace()` | 在末尾追加单个 |

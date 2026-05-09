@@ -4,9 +4,8 @@ import * as fs from 'fs';
 import { Spec, RepoEntry } from '../types';
 import { WORKTREES_DIR } from '../config';
 import { saveSpec } from '../store';
-import { setActiveSpecName } from '../state';
 import { isGitRepo, getRepoRoot, hasCommits, createWorktree } from '../gitOps';
-import { generateWorkspaceFile, openWorkspaceFile, getSpecWorktreeRoot } from '../workspaceOps';
+import { generateWorkspaceFile, getSpecWorktreeRoot } from '../workspaceOps';
 import { SpecWebviewProvider, CreateSpecData } from '../views/specWebview';
 
 export function registerCreateSpecCommand(
@@ -85,11 +84,5 @@ async function createSpecFromData(data: CreateSpecData, refreshViews: () => void
   // Generate .code-workspace file (for persistence)
   generateWorkspaceFile(spec);
 
-  // Set as active spec BEFORE opening workspace (window will reload)
-  await setActiveSpecName(spec.name);
-
-  // Open the .code-workspace file — gives a named workspace instead of
-  // "Untitled (Workspace)". This reloads the window; terminal and views
-  // will be restored by the activation path in extension.ts.
-  await openWorkspaceFile(spec.name);
+  refreshViews();
 }

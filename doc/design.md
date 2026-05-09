@@ -24,7 +24,8 @@ tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（S
 - 点击侧边栏 "All Specs" 的 (+) 按钮
 - 填写 Spec 名称、描述、Feature 分支
 - 添加一个或多个 Git 仓库
-- 点击 Create → 自动创建 worktrees、打开 `.code-workspace` 文件（窗口重新加载）、激活时自动恢复 workspace 并启动 AI agent（tmux 会话）
+- 点击 Create → 自动创建 worktrees、生成 `.code-workspace` 文件、刷新侧边栏视图
+- 创建完成后不会自动切换到新 Spec（无窗口重新加载），用户可在 All Specs 视图中手动切换
 
 ### 2. 开发中添加 Repo
 - 点击 "Current Spec" 的 (+) 按钮
