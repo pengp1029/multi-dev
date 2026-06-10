@@ -1,8 +1,14 @@
 .vscode/**
 .vscode-test/**
-src/**
+.claude/**
+.omc/**
+.git/**
 .gitignore
+.vscodeignore
+src/**
 tsconfig.json
-# Exclude node_modules except js-yaml
+CLAUDE.md
+*.vsix
+# Exclude node_modules except js-yaml (runtime dep)
 node_modules/**
 !node_modules/js-yaml/**

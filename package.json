@@ -4,6 +4,10 @@
   "description": "Manage development specs with git worktree isolation and AI agent integration",
   "version": "1.0.0",
   "publisher": "tmux-agent",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pengp1029/multi-dev.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
