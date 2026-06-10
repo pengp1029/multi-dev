@@ -13,6 +13,9 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "extensionDependencies": [
+    "vscode.git"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {

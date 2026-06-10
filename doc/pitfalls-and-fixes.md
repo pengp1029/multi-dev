@@ -457,6 +457,70 @@ if (activeSpecName && isInManagedWorkspaceFile()) {
 
 ---
 
+## Bug 16: GitHub 扩展疯狂刷新 / 重新打开 spec 时 GitHub 仓库信息丢失
+
+**现象**:
+1. 切换 / 打开某个 spec 后，VSCode 内置 Git 扩展和 GitHub 扩展的 Source Control / Pull Request 视图持续闪烁，反复显示 `sim_extension` 等仓库的 git tree。
+2. 重新打开 `multi-dev` 管理的 spec 时，GitHub 扩展把仓库信息丢掉，需要手动 "Add Repository" 才能恢复。
+
+**原因**:
+
+A. 仓库 guard 与 Git 扩展打架（开/关循环）
+
+`startRepoGuard()` 监听 `onDidOpenRepository`，凡是不在当前 spec `repos` 列表里的仓库一律 `git.close`。但是 git worktree 目录中的 `.git` 是一个文件（`gitdir: <parent>/.git/worktrees/<name>`），指向原始仓库。Git 扩展在跟随这个指针后会把**原始仓库**也注册进来。原始仓库不在 spec.repos 里 → guard 立即 `git.close` → Git 扩展从 worktree 的 `.git` 指针重新发现原始仓库 → guard 再 `git.close`，无限循环。视觉表现就是 GitHub / Git 扩展的 tree 被反复创建销毁。
+
+B. Git 扩展 API 未就绪窗口期
+
+`vscode.git` 的 `getAPI(1)` 即使返回成功，`api.state` 也可能仍为 `'uninitialized'`，此时 `api.repositories` 为空、`openRepository()` 是 no-op。`extension.ts` 激活路径里只 `setTimeout(2000)` 一刀切，如果 Git 扩展在 2 秒后才 initialize 完成，`refreshGitRepositories()` 会全部踩空，没打开任何仓库；后续 GitHub 扩展跟着 Git API 跑，自然就丢失了仓库信息。
+
+**修复** (`src/gitScm.ts`):
+
+1. 仓库 guard 重新限定作用域 — 只关闭位于 `~/.tmux-agent/worktrees/` 目录下、且不属于当前 spec 的仓库（即"别的 spec 的 worktree"）。父仓库（如 `/home/pp/baidu/adu/sim_extension`）、用户自己的仓库、插件本身仓库一律放过。
+2. 增加节流 — 同一路径 5 秒内只允许 close 一次，万一仍出现循环也只是低频抖动，不会再"疯狂刷新"。
+3. `getGitAPI()` 增加 initialize 等待 — 通过 `onDidChangeState` 阻塞到 `state === 'initialized'`（5s 超时兜底），避免在 API 未就绪时就调用 `repositories` / `openRepository()`。
+4. `refreshGitRepositories()` 用事件驱动等待替代固定 sleep — `onDidOpenRepository` 监听到所有目标 worktree 都被自动发现时立即继续；超时（1.5s）后才对仍缺失的路径手动 `openRepository()` 兜底。
+5. 路径比较前统一 `path.resolve()` 归一，避免末尾斜杠 / 相对路径导致误判。
+6. `package.json` 声明 `extensionDependencies: ["vscode.git"]` 确保 Git 扩展先完成激活。
+
+**关键代码** (`src/gitScm.ts`):
+
+```typescript
+function isUnderWorktreesDir(candidate: string): boolean {
+  const c = path.resolve(candidate);
+  const root = path.resolve(WORKTREES_DIR);
+  if (c === root) { return false; }
+  const rootSep = root.endsWith(path.sep) ? root : root + path.sep;
+  return c.startsWith(rootSep);
+}
+
+repoGuardDisposable = api.onDidOpenRepository(async (repo) => {
+  const repoPath = path.resolve(repo.rootUri.fsPath);
+  if (!isUnderWorktreesDir(repoPath)) { return; }   // 父仓库 / 用户仓库不动
+  const allowed = getActiveSpecWorktreePaths();
+  if (allowed.has(repoPath) || allowed.size === 0) { return; }
+  if (shouldThrottleClose(repoPath)) { return; }    // 5s 冷却
+  await vscode.commands.executeCommand('git.close', repo.rootUri);
+});
+```
+
+```typescript
+async function getGitAPI(): Promise<GitAPI | undefined> {
+  // ...
+  const api = gitExtension.exports.getAPI(1);
+  if (api.state !== 'initialized') {
+    await new Promise<void>(resolve => {
+      const d = api.onDidChangeState(s => {
+        if (s === 'initialized') { d.dispose(); resolve(); }
+      });
+      setTimeout(() => { d.dispose(); resolve(); }, 5000);
+    });
+  }
+  return api;
+}
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API
@@ -487,6 +551,8 @@ if (activeSpecName && isInManagedWorkspaceFile()) {
 3. **`openRepositoryInParentFolders` 不能设为 `"never"`** — Git worktree 的 `.git` 文件指向原始仓库，Git 扩展将其归类为 "parent folder repository"；设为 `"never"` 会彻底阻止 Git 扩展打开 worktree 仓库（包括 `api.openRepository()` 编程调用），必须保持默认值或设为 `"prompt"`/`"always"`
 4. **workspace folder 变化不等于 SCM 视图更新** — 必须通过 Git API 显式管理仓库
 5. **`onDidOpenRepository`/`onDidCloseRepository` 事件可用于同步等待** — 替代固定延时，实现可靠的仓库就绪检测
+6. **`getAPI(1)` 不保证 `state === 'initialized'`** — 即使 `extension.activate()` 完成，API 仍可能处于 `uninitialized` 状态，此时 `repositories` 为空、`openRepository()` 是 no-op；必须额外 `await onDidChangeState` 直到 `'initialized'`
+7. **关闭 worktree 父仓库会触发循环** — Git 扩展跟随 worktree 的 `.git` 指针反向发现父仓库；如果 guard 无差别 close 父仓库，会被 Git 扩展立即重新打开，形成 open ↔ close 抖动循环（视觉上是 SCM/GitHub 扩展疯狂刷新）；必须把 guard 作用域限定在自己管理的目录（`WORKTREES_DIR`）下，并对同一路径添加冷却节流
 
 ### `.code-workspace` 文件操作
 
