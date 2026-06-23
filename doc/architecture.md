@@ -60,10 +60,10 @@ tmux-agent/
 │   ├── user-auth.yaml
 │   └── payment.yaml
 ├── worktrees/                # git worktree 工作目录
-│   ├── user-auth/
+│   ├── user-auth/            # Spec 根目录（可放 spec.md、笔记等任务级文件）
 │   │   ├── backend/          # → feat/user-auth 分支
 │   │   └── frontend/         # → feat/user-auth 分支
-│   └── payment/
+│   └── payment/              # Spec 根目录
 │       └── core-service/
 └── workspaces/               # VSCode .code-workspace 文件
     ├── user-auth.code-workspace
@@ -129,8 +129,9 @@ create → active → [switch between specs] → cleanup/delete
   ├─ 保存 YAML           ├─ 更新 active state     ├─ 删除 workspace 文件
   ├─ 生成 .code-workspace├─ 已在 workspace 内?     ├─ 关闭终端
   ├─ openWorkspaceFile() │  ├─ yes: 原子替换文件夹  └─ (可选) 删除 YAML
-  │  (窗口重新加载)       │  └─ no: openWorkspaceFile()
-  └─ 激活时恢复终端等     │       (窗口重新加载)
+  │  (窗口重新加载)       │  │   (spec 根 + 各 repo)
+  └─ 激活时恢复终端等     │  └─ no: openWorkspaceFile()
+                          │       (窗口重新加载)
                           │
                      addRepo (动态添加)
                           ├─ 创建新 worktree

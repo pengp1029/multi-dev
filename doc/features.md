@@ -94,6 +94,19 @@
 
 重新读取 YAML 文件和 git status，刷新两个 TreeView。
 
+## Workspace 文件夹结构
+
+切换或启动一个 Spec 时，VSCode 资源管理器中的文件夹顺序为：
+
+```
+1. ~/.tmux-agent/worktrees/<spec>/        ← Spec 根目录（spec 级任务文件）
+2. ~/.tmux-agent/worktrees/<spec>/repo1/  ← 第一个 repo 的 worktree
+3. ~/.tmux-agent/worktrees/<spec>/repo2/  ← 第二个 repo 的 worktree
+...
+```
+
+**Spec 根目录用途**: 放置任务级别的非代码文件，如 `spec.md`（任务说明）、设计稿、笔记、草稿等。这些文件在资源管理器顶层 folder 中可直接访问，无需进入某个具体 repo。切换/启动 Spec 时若根目录不存在会自动创建（`mkdir -p`）。
+
 ## Git SCM 隔离机制
 
 每个 Spec 的 `.code-workspace` 文件包含隔离设置：
@@ -101,6 +114,7 @@
 ```json
 {
   "folders": [
+    { "name": "user-auth", "path": "~/.tmux-agent/worktrees/user-auth" },
     { "name": "backend (feat/user-auth)", "path": "~/.tmux-agent/worktrees/user-auth/backend" }
   ],
   "settings": {
@@ -141,10 +155,10 @@ workspace 文件夹:
 |------|------|------|
 | 首次启动 | `openWorkspaceFile()` | 打开 `.code-workspace` 文件（窗口重新加载） |
 | 首次创建 | `refreshViews()` | 刷新侧边栏视图，不切换窗口 |
-| 切换 Spec（已在 workspace 文件中） | `switchWorkspaceFolders()` | 原子替换 managed 文件夹 |
+| 切换 Spec（已在 workspace 文件中） | `switchWorkspaceFolders()` | 原子替换 managed 文件夹（spec 根 + 各 repo） |
 | 切换 Spec（不在 workspace 文件中） | `openWorkspaceFile()` | 打开 `.code-workspace` 文件（窗口重新加载） |
 | 添加单个 Repo | `addFolderToCurrentWorkspace()` | 在末尾追加单个 |
-| 删除/清理 | `removeFoldersFromCurrentWorkspace()` | 原子移除 managed 文件夹 |
+| 删除/清理 | `removeFoldersFromCurrentWorkspace(spec)` | 原子移除 managed 文件夹（spec 根 + 各 repo） |
 
 ## Agent 终端管理
 

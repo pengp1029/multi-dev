@@ -81,6 +81,8 @@ VSCode 终端 attach (上下文保留)
 ~/.tmux-agent/
 ├── specs/           # Spec YAML 配置文件
 ├── worktrees/       # Git worktree 工作目录
+│   └── <spec>/      # Spec 根目录（可放 spec.md、笔记、设计稿等任务级文件）
+│       └── <repo>/  # 各 repo 的 worktree
 └── workspaces/      # .code-workspace 文件
 ```
 

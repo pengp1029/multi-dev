@@ -19,13 +19,45 @@ function isManagedFolder(folder: vscode.WorkspaceFolder): boolean {
   return folder.uri.fsPath.startsWith(WORKTREES_DIR);
 }
 
+/**
+ * Build the ordered list of workspace folders for a spec:
+ *   [<spec worktree root>, <repo1>, <repo2>, ...]
+ *
+ * The spec root folder exposes any non-repo files the user drops under
+ * `~/.tmux-agent/worktrees/<spec>/` (specs, design docs, scratch files)
+ * directly in the VSCode explorer, while each repo retains its branch-tagged
+ * top-level folder for SCM scoping.
+ *
+ * The root directory is created on disk if missing, so `vscode.openFolder`
+ * never fails on a freshly-started spec that has no repos yet.
+ */
+function buildSpecWorkspaceFolders(
+  spec: Spec,
+): { name: string; uri: vscode.Uri; path: string }[] {
+  const root = getSpecWorktreeRoot(spec.name);
+  if (!fs.existsSync(root)) {
+    fs.mkdirSync(root, { recursive: true });
+  }
+  const folders: { name: string; uri: vscode.Uri; path: string }[] = [
+    { name: spec.name, uri: vscode.Uri.file(root), path: root },
+  ];
+  for (const r of spec.repos) {
+    folders.push({
+      name: `${r.name} (${r.branch})`,
+      uri: vscode.Uri.file(r.worktreePath),
+      path: r.worktreePath,
+    });
+  }
+  return folders;
+}
+
 export function generateWorkspaceFile(spec: Spec): string {
   ensureDirs();
   const wsPath = getWorkspacePath(spec.name);
   const content = {
-    folders: spec.repos.map(r => ({
-      name: `${r.name} (${r.branch})`,
-      path: r.worktreePath,
+    folders: buildSpecWorkspaceFolders(spec).map(f => ({
+      name: f.name,
+      path: f.path,
     })),
     settings: {
       'tmuxAgent.activeSpec': spec.name,
@@ -72,10 +104,10 @@ export function switchWorkspaceFolders(spec: Spec): boolean {
     }
   }
 
-  // New folders to add
-  const newFolders = spec.repos.map(r => ({
-    uri: vscode.Uri.file(r.worktreePath),
-    name: `${r.name} (${r.branch})`,
+  // New folders to add — spec root first, then each repo worktree.
+  const newFolders = buildSpecWorkspaceFolders(spec).map(f => ({
+    uri: f.uri,
+    name: f.name,
   }));
 
   if (managedIndices.length > 0) {
@@ -112,9 +144,9 @@ export function switchWorkspaceFolders(spec: Spec): boolean {
  */
 export function addSpecFoldersToWorkspace(spec: Spec): boolean {
   const currentCount = vscode.workspace.workspaceFolders?.length ?? 0;
-  const newFolders = spec.repos.map(r => ({
-    uri: vscode.Uri.file(r.worktreePath),
-    name: `${r.name} (${r.branch})`,
+  const newFolders = buildSpecWorkspaceFolders(spec).map(f => ({
+    uri: f.uri,
+    name: f.name,
   }));
 
   if (newFolders.length === 0) { return true; }
@@ -144,15 +176,20 @@ export function addFolderToCurrentWorkspace(repo: RepoEntry): boolean {
   });
 }
 
-export function removeFoldersFromCurrentWorkspace(repos: RepoEntry[]): void {
+export function removeFoldersFromCurrentWorkspace(spec: Spec): void {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders) { return; }
 
+  // Remove both the spec root folder and each repo worktree folder.
+  const targets = new Set<string>([
+    getSpecWorktreeRoot(spec.name),
+    ...spec.repos.map(r => r.worktreePath),
+  ]);
+
   const indicesToRemove: number[] = [];
-  for (const repo of repos) {
-    const idx = folders.findIndex(f => f.uri.fsPath === repo.worktreePath);
-    if (idx >= 0) {
-      indicesToRemove.push(idx);
+  for (let i = 0; i < folders.length; i++) {
+    if (targets.has(folders[i].uri.fsPath)) {
+      indicesToRemove.push(i);
     }
   }
 

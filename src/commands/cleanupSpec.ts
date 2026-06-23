@@ -51,7 +51,7 @@ export function registerCleanupSpecCommand(refreshViews: () => void): vscode.Dis
       // Remove folders from current workspace if active
       const activeSpecName = getActiveSpecName();
       if (activeSpecName === spec.name) {
-        removeFoldersFromCurrentWorkspace(spec.repos);
+        removeFoldersFromCurrentWorkspace(spec);
         await setActiveSpecName(undefined);
       }
 

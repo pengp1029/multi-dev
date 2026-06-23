@@ -50,7 +50,7 @@ export function registerDeleteSpecCommand(refreshViews: () => void): vscode.Disp
       // Remove folders from current workspace if this is the active spec
       const activeSpecName = getActiveSpecName();
       if (activeSpecName === spec.name) {
-        removeFoldersFromCurrentWorkspace(spec.repos);
+        removeFoldersFromCurrentWorkspace(spec);
         await setActiveSpecName(undefined);
       }
 
