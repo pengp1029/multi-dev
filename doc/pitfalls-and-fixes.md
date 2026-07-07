@@ -521,6 +521,32 @@ async function getGitAPI(): Promise<GitAPI | undefined> {
 
 ---
 
+## Bug 17: 空窗口切换 / 启动 Spec 无效（窗口无反应）
+
+**现象**: 直接打开一个空的 VSCode 窗口（没有打开任何文件夹或工作区），通过扩展切换 Spec 或启动 Spec 时，窗口毫无反应；必须先随便打开一个文件夹，再切换才能生效。
+
+**原因**: `src/workspaceOps.ts` 的 `openWorkspaceFile()` 调用内置命令 `vscode.openFolder` 时只传了 `{ forceNewWindow: false }`，未传 `forceReuseWindow`。此时 VSCode 退回到 `window.openFoldersInNewWindow` 启发式策略来决定在哪个窗口打开：对于**空窗口**，该启发式常常选择"在新窗口打开"或直接 no-op，导致当前空窗口不动；当窗口已打开了某个文件夹时，启发式才会复用当前窗口，所以"先开文件夹再切换"的路径能正常工作。
+
+**修复**:
+- 在 `openWorkspaceFile` 中显式传入 `forceReuseWindow: !forceNewWindow`，强制复用当前窗口打开 workspace 文件
+- 该函数同时被 `switchSpec`（切换 spec）和 `startSpec`（启动 spec）复用，两条路径均被修复
+
+**代码** (`src/workspaceOps.ts`):
+```typescript
+// ❌ 修复前：仅传 forceNewWindow，空窗口下 VSCode 启发式策略可能 no-op
+await vscode.commands.executeCommand('vscode.openFolder', wsUri, {
+  forceNewWindow,
+});
+
+// ✅ 修复后：显式传 forceReuseWindow，强制复用当前窗口
+await vscode.commands.executeCommand('vscode.openFolder', wsUri, {
+  forceNewWindow,
+  forceReuseWindow: !forceNewWindow,
+});
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API

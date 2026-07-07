@@ -208,6 +208,13 @@ export function removeFoldersFromCurrentWorkspace(spec: Spec): void {
  *
  * This triggers a window reload. Pass `forceNewWindow: true` to open in a
  * separate window instead.
+ *
+ * We set `forceReuseWindow: true` (unless a new window was explicitly
+ * requested) so the CURRENT window is always reused. Without it, VSCode falls
+ * back to the `window.openFoldersInNewWindow` heuristic — and for an EMPTY
+ * window (no folder open) that heuristic often opens the workspace in a
+ * separate window (or no-ops), leaving the empty window untouched. That was
+ * the "can't switch spec from an empty VSCode window" bug.
  */
 export async function openWorkspaceFile(specName: string, forceNewWindow = false): Promise<void> {
   const wsPath = getWorkspacePath(specName);
@@ -217,7 +224,7 @@ export async function openWorkspaceFile(specName: string, forceNewWindow = false
   await vscode.commands.executeCommand(
     'vscode.openFolder',
     vscode.Uri.file(wsPath),
-    { forceNewWindow },
+    { forceNewWindow, forceReuseWindow: !forceNewWindow },
   );
 }
 
