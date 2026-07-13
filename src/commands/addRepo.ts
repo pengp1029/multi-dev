@@ -69,7 +69,7 @@ export function registerAddRepoCommand(refreshViews: () => void): vscode.Disposa
       const worktreePath = path.join(WORKTREES_DIR, spec.name, repoName);
 
       // Create worktree
-      createWorktree(repoRoot, worktreePath, branch);
+      await createWorktree(repoRoot, worktreePath, branch);
 
       // Update spec
       const newRepo: RepoEntry = {

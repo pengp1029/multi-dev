@@ -1,6 +1,34 @@
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+
+/**
+ * Run a git command asynchronously via `spawn` (does NOT block the extension
+ * host event loop, unlike `execSync`). This matters for `git worktree add`,
+ * which checks out the whole tree — for large repos (tens of GB) a synchronous
+ * checkout freezes VSCode for minutes and can get the extension host killed
+ * mid-checkout, leaving orphaned half-checked-out directories with no `.git`.
+ */
+function runGitAsync(cwd: string, args: string[], timeoutMs = 0): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr?.on('data', d => { stderr += d.toString(); });
+    let timer: NodeJS.Timeout | undefined;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        child.kill('SIGTERM');
+        reject(new Error(`git ${args.join(' ')} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    }
+    child.on('error', err => { if (timer) { clearTimeout(timer); } reject(err); });
+    child.on('close', code => {
+      if (timer) { clearTimeout(timer); }
+      if (code === 0) { resolve(); }
+      else { reject(new Error(stderr.trim() || `git ${args.join(' ')} exited with code ${code}`)); }
+    });
+  });
+}
 
 export function isGitRepo(repoPath: string): boolean {
   try {
@@ -118,7 +146,7 @@ export function worktreeExists(originPath: string, worktreePath: string): boolea
   }
 }
 
-export function createWorktree(originPath: string, worktreePath: string, branch: string): void {
+export async function createWorktree(originPath: string, worktreePath: string, branch: string): Promise<void> {
   // Resolve to actual repo root
   const repoRoot = getRepoRoot(originPath);
 
@@ -135,7 +163,10 @@ export function createWorktree(originPath: string, worktreePath: string, branch:
     return;
   }
 
-  // If the worktree directory already exists on disk (stale), clean up first
+  // If the worktree directory already exists on disk (stale/orphaned — e.g. a
+  // previous checkout was interrupted and left a half-populated dir with no
+  // `.git`), clean it up first. Use async fs.rm so a huge orphaned tree
+  // (tens of GB) does NOT freeze the extension host the way fs.rmSync would.
   if (fs.existsSync(worktreePath)) {
     try {
       execSync('git worktree prune', { cwd: repoRoot, stdio: 'pipe' });
@@ -143,7 +174,7 @@ export function createWorktree(originPath: string, worktreePath: string, branch:
       // best effort
     }
     if (fs.existsSync(worktreePath)) {
-      fs.rmSync(worktreePath, { recursive: true, force: true });
+      await fs.promises.rm(worktreePath, { recursive: true, force: true });
     }
   }
 
@@ -156,23 +187,14 @@ export function createWorktree(originPath: string, worktreePath: string, branch:
   if (branchExists(repoRoot, branch)) {
     // Branch exists locally — check if it's already checked out in another worktree
     try {
-      execSync(`git worktree add "${worktreePath}" "${branch}"`, {
-        cwd: repoRoot,
-        stdio: 'pipe',
-      });
+      await runGitAsync(repoRoot, ['worktree', 'add', worktreePath, branch]);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes('already checked out')) {
         // Branch is checked out in main worktree or another worktree,
         // create with a detached HEAD then checkout
-        execSync(`git worktree add --detach "${worktreePath}"`, {
-          cwd: repoRoot,
-          stdio: 'pipe',
-        });
-        execSync(`git checkout "${branch}"`, {
-          cwd: worktreePath,
-          stdio: 'pipe',
-        });
+        await runGitAsync(repoRoot, ['worktree', 'add', '--detach', worktreePath]);
+        await runGitAsync(worktreePath, ['checkout', branch]);
       } else {
         throw e;
       }
@@ -185,28 +207,16 @@ export function createWorktree(originPath: string, worktreePath: string, branch:
       fetchBranch(repoRoot, branch);
       // After fetch, the local tracking branch should be creatable
       try {
-        execSync(`git worktree add --track -b "${branch}" "${worktreePath}" "${remoteRef}"`, {
-          cwd: repoRoot,
-          stdio: 'pipe',
-        });
+        await runGitAsync(repoRoot, ['worktree', 'add', '--track', '-b', branch, worktreePath, remoteRef]);
       } catch {
         // Fallback: if --track fails, try creating from the remote ref directly
-        execSync(`git worktree add "${worktreePath}" "${remoteRef}"`, {
-          cwd: repoRoot,
-          stdio: 'pipe',
-        });
+        await runGitAsync(repoRoot, ['worktree', 'add', worktreePath, remoteRef]);
         // Create local branch tracking the remote
-        execSync(`git checkout -b "${branch}" --track "${remoteRef}"`, {
-          cwd: worktreePath,
-          stdio: 'pipe',
-        });
+        await runGitAsync(worktreePath, ['checkout', '-b', branch, '--track', remoteRef]);
       }
     } else {
       // Branch doesn't exist anywhere — create new branch based on current HEAD
-      execSync(`git worktree add -b "${branch}" "${worktreePath}"`, {
-        cwd: repoRoot,
-        stdio: 'pipe',
-      });
+      await runGitAsync(repoRoot, ['worktree', 'add', '-b', branch, worktreePath]);
     }
   }
 }

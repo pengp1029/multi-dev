@@ -521,6 +521,58 @@ async function getGitAPI(): Promise<GitAPI | undefined> {
 
 ---
 
+## Bug 18: 空窗口创建 Spec 后侧边栏看不到 spec，再次创建报"已经存在"
+
+**现象**: 在空的 VSCode 窗口（未打开任何文件夹）下创建 spec，磁盘上会生成 worktree 目录，但侧边栏（TreeView）看不到该 spec；再次创建同名 spec 时报错 `fatal: '<dir>' 已经存在`。
+
+**原因**:
+- `src/gitOps.ts` 的 `createWorktree` 使用**同步阻塞**的 `execSync('git worktree add ...')` 执行 checkout，对巨型仓库（几十 GB）会**冻结整个扩展宿主进程**数分钟，宿主可能在 checkout 中途被杀。
+- `src/commands/createSpec.ts` 旧逻辑顺序是「先 createWorktree 循环 → 再 saveSpec + generateWorkspaceFile + refreshViews」。checkout 卡死或宿主被杀后，`saveSpec`/`refreshViews` 从未执行 → spec YAML 从未写入 → 侧边栏为空。
+- 磁盘上残留**半 checkout 的孤儿目录**（有文件、但 `.git` 尚未写完、也未注册进 `git worktree list`）。旧代码用同步 `fs.rmSync` 清理（同样会卡死），即便走到 `git worktree add` 也因目录已存在报 `已经存在`。
+
+**修复**:
+- `src/gitOps.ts`：新增 `runGitAsync()`（基于 `child_process.spawn`，异步、不阻塞事件循环）；`createWorktree` 改为 `async`，所有 `git worktree add`/`git checkout` 走异步；孤儿目录清理改用 `fs.promises.rm`（异步删除大目录不冻结）。
+- `src/commands/createSpec.ts`（关键）：**调整顺序为先 `saveSpec` + `generateWorkspaceFile` + `refreshViews`，再 checkout worktree**，使 spec 立即出现在侧边栏；即使 checkout 中途崩溃，spec 记录已持久化，后续可用 Start 重试；checkout 包裹在 `vscode.window.withProgress` 中逐仓库显示进度。
+- `src/commands/startSpec.ts`、`src/commands/addRepo.ts`：适配为 `await createWorktree(...)`。
+
+**代码** (`src/gitOps.ts`):
+```typescript
+// 异步 git 执行，不阻塞事件循环
+function runGitAsync(cwd: string, args: string[], timeoutMs = 0): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.on('close', code =>
+      code === 0 ? resolve() : reject(new Error(`git ${args.join(' ')} exited with ${code}`)));
+  });
+}
+
+// 孤儿目录异步清理
+if (fs.existsSync(worktreePath)) {
+  await fs.promises.rm(worktreePath, { recursive: true, force: true });
+}
+await runGitAsync(repoRoot, ['worktree', 'add', worktreePath, branch]);
+```
+
+**代码** (`src/commands/createSpec.ts`):
+```typescript
+// ✅ 先持久化 spec，再 checkout —— 确保侧边栏立即可见，checkout 崩溃也不丢 spec
+saveSpec(spec);
+generateWorkspaceFile(spec);
+refreshViews();
+
+await vscode.window.withProgress(
+  { location: vscode.ProgressLocation.Notification, title: `Creating worktrees for spec "${data.name}"` },
+  async progress => {
+    for (const repo of repos) {
+      progress.report({ message: `${repo.name} (${repo.branch})` });
+      await createWorktree(repo.originPath, repo.worktreePath, repo.branch);
+    }
+  },
+);
+```
+
+---
+
 ## Bug 17: 空窗口切换 / 启动 Spec 无效（窗口无反应）
 
 **现象**: 直接打开一个空的 VSCode 窗口（没有打开任何文件夹或工作区），通过扩展切换 Spec 或启动 Spec 时，窗口毫无反应；必须先随便打开一个文件夹，再切换才能生效。
@@ -597,3 +649,4 @@ await vscode.commands.executeCommand('vscode.openFolder', wsUri, {
 3. **stale worktree 目录需要先 prune** — `git worktree prune` 清理悬挂引用
 4. **用户选择的路径可能不是 repo 根目录** — 用 `git rev-parse --show-toplevel` 解析
 5. **本地不存在的分支可能存在于远程** — 创建 worktree 前需 `git branch -r --list` 检查远程分支，存在则 fetch 后创建 tracking worktree，避免从 HEAD 误建空分支
+6. **同步 `git worktree add` 会阻塞扩展宿主** — 巨型仓库检出耗时数分钟，`execSync` 会冻结整个 extension host 甚至被系统杀死；应改用基于 `spawn` 的异步封装（`runGitAsync`），孤儿目录清理同样用 `fs.promises.rm` 异步执行；且必须**先持久化 spec（saveSpec + generateWorkspaceFile + refreshViews）再启动 checkout**，避免 checkout 中途崩溃导致 spec 不可见与半成品孤儿目录（残留目录在下次创建时报 `已经存在`）

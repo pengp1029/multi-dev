@@ -67,22 +67,39 @@ async function createSpecFromData(data: CreateSpecData, refreshViews: () => void
     createdAt: new Date().toISOString(),
   };
 
-  // Create worktrees
-  for (const repo of repos) {
-    createWorktree(repo.originPath, repo.worktreePath, repo.branch);
-  }
-
   // Ensure worktree root directory exists (even for specs with no repos)
   const worktreeRoot = getSpecWorktreeRoot(data.name);
   if (!fs.existsSync(worktreeRoot)) {
     fs.mkdirSync(worktreeRoot, { recursive: true });
   }
 
-  // Save spec YAML
+  // Persist the spec and refresh the sidebar BEFORE creating worktrees.
+  // Worktree checkout can take minutes for large repos; if it froze/crashed
+  // the extension host, the old ordering (save+refresh AFTER the loop) left
+  // the spec invisible in the sidebar even though directories were created.
+  // Save-first guarantees the spec shows up immediately and survives a
+  // mid-checkout crash (user can retry checkout via Start).
   saveSpec(spec);
-
-  // Generate .code-workspace file (for persistence)
   generateWorkspaceFile(spec);
+  refreshViews();
+
+  // Create worktrees with a progress notification (async — does NOT block the
+  // extension host event loop).
+  if (repos.length > 0) {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Creating worktrees for spec "${data.name}"`,
+        cancellable: false,
+      },
+      async progress => {
+        for (const repo of repos) {
+          progress.report({ message: `${repo.name} (${repo.branch})` });
+          await createWorktree(repo.originPath, repo.worktreePath, repo.branch);
+        }
+      },
+    );
+  }
 
   refreshViews();
 }

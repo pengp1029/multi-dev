@@ -30,7 +30,7 @@ export function registerStartSpecCommand(refreshViews: () => void): vscode.Dispo
       // Create worktrees if they don't exist
       for (const repo of spec.repos) {
         try {
-          createWorktree(repo.originPath, repo.worktreePath, repo.branch);
+          await createWorktree(repo.originPath, repo.worktreePath, repo.branch);
         } catch {
           // Worktree may already exist, skip
         }
