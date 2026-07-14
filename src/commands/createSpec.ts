@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { Spec, RepoEntry } from '../types';
 import { WORKTREES_DIR } from '../config';
 import { saveSpec } from '../store';
-import { isGitRepo, getRepoRoot, hasCommits, createWorktree } from '../gitOps';
+import { isGitRepo, getRepoRoot, createWorktree } from '../gitOps';
 import { generateWorkspaceFile, getSpecWorktreeRoot } from '../workspaceOps';
 import { SpecWebviewProvider, CreateSpecData } from '../views/specWebview';
 
@@ -40,12 +40,6 @@ async function createSpecFromData(data: CreateSpecData, refreshViews: () => void
       throw new Error(`"${repo.path}" is not a git repository`);
     }
     const root = getRepoRoot(repo.path);
-    if (!hasCommits(root)) {
-      throw new Error(
-        `"${repo.name}" (${root}) has no commits yet. ` +
-        `Please make at least one initial commit before adding to a spec.`
-      );
-    }
     resolvedRepos.push({ path: repo.path, name: repo.name, root });
   }
 

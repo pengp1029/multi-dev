@@ -73,6 +73,37 @@ export function hasCommits(repoPath: string): boolean {
   }
 }
 
+/**
+ * Ensure the repo has at least one commit.
+ *
+ * An empty repo (no commits) has an unborn HEAD, so `git worktree add` cannot
+ * base a worktree on it and fails with "has no commits yet". Rather than block
+ * the user, create an empty initial commit — this is exactly what the old error
+ * message instructed the user to do by hand.
+ *
+ * A fallback identity is injected only when user.name/user.email are not
+ * configured (fresh machine / CI), otherwise `git commit` would abort with
+ * "Please tell me who you are". Existing user config is never overridden.
+ */
+export function ensureInitialCommit(repoPath: string): void {
+  if (hasCommits(repoPath)) { return; }
+
+  let identityArgs = '';
+  try {
+    const email = execSync('git config user.email', {
+      cwd: repoPath,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    }).trim();
+    if (!email) { throw new Error('no committer identity configured'); }
+  } catch {
+    identityArgs = '-c user.name="tmux-agent" -c user.email="tmux-agent@localhost"';
+  }
+
+  const cmd = `git ${identityArgs} commit --allow-empty -m "Initial commit"`.replace(/\s+/g, ' ').trim();
+  execSync(cmd, { cwd: repoPath, stdio: 'pipe' });
+}
+
 export function branchExists(repoPath: string, branch: string): boolean {
   try {
     execSync(`git rev-parse --verify "${branch}"`, {
@@ -150,13 +181,9 @@ export async function createWorktree(originPath: string, worktreePath: string, b
   // Resolve to actual repo root
   const repoRoot = getRepoRoot(originPath);
 
-  // Check if repo has any commits
-  if (!hasCommits(repoRoot)) {
-    throw new Error(
-      `Repository "${repoRoot}" has no commits yet (HEAD is invalid). ` +
-      `Please make at least one initial commit before creating a worktree.`
-    );
-  }
+  // An empty repo has an unborn HEAD, so `git worktree add` cannot base a
+  // worktree on it. Auto-create an empty initial commit instead of failing.
+  ensureInitialCommit(repoRoot);
 
   // Skip if worktree already exists at this path
   if (worktreeExists(repoRoot, worktreePath)) {

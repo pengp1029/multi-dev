@@ -599,6 +599,36 @@ await vscode.commands.executeCommand('vscode.openFolder', wsUri, {
 
 ---
 
+## Bug 19: 空 git 仓库创建 spec 报错 "has no commits yet"
+
+**现象**: 对一个刚 `git init`、还没有任何 commit 的空仓库创建 spec（或 addRepo），报错 `"xxx" has no commits yet. Please make an initial commit first.`，流程被阻断。
+
+**原因**: 空仓库的 HEAD 处于 unborn 状态，`git worktree add` 无法基于 unborn HEAD 创建 worktree。原代码在 `src/commands/createSpec.ts`、`src/commands/addRepo.ts`、`src/gitOps.ts` 三处都用 `hasCommits()` 做前置校验并直接抛错，把手动 commit 的负担丢给用户。
+
+**修复**:
+- 在 `src/gitOps.ts` 新增 `ensureInitialCommit(repoPath)`，若仓库无 commit 则自动执行 `git commit --allow-empty -m "Initial commit"`（正是原错误提示要用户手动做的事）
+- 仅当仓库未配置 `user.email` 时才注入临时身份 `-c user.name="tmux-agent" -c user.email="tmux-agent@localhost"`，已有配置绝不覆盖
+- `createWorktree()` 开头调用 `ensureInitialCommit(repoRoot)` 取代原抛错逻辑
+- 移除 `createSpec.ts` / `addRepo.ts` 中的 `hasCommits` 阻断校验及对应 import
+
+**代码** (`src/gitOps.ts`):
+```typescript
+export function ensureInitialCommit(repoPath: string): void {
+  if (hasCommits(repoPath)) { return; }
+  let identityArgs = '';
+  try {
+    const email = execSync('git config user.email', { cwd: repoPath, encoding: 'utf-8', stdio: 'pipe' }).trim();
+    if (!email) { throw new Error('no committer identity configured'); }
+  } catch {
+    identityArgs = '-c user.name="tmux-agent" -c user.email="tmux-agent@localhost"';
+  }
+  const cmd = `git ${identityArgs} commit --allow-empty -m "Initial commit"`.replace(/\s+/g, ' ').trim();
+  execSync(cmd, { cwd: repoPath, stdio: 'pipe' });
+}
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { loadSpec, saveSpec } from '../store';
 import { getActiveSpecName } from '../state';
-import { isGitRepo, getRepoRoot, hasCommits, createWorktree } from '../gitOps';
+import { isGitRepo, getRepoRoot, createWorktree } from '../gitOps';
 import { WORKTREES_DIR } from '../config';
 import { updateWorkspaceFile, addFolderToCurrentWorkspace } from '../workspaceOps';
 import { RepoEntry } from '../types';
@@ -39,14 +39,8 @@ export function registerAddRepoCommand(refreshViews: () => void): vscode.Disposa
       return;
     }
 
-    // Resolve to repo root and validate it has commits
+    // Resolve to repo root
     const repoRoot = getRepoRoot(repoPath);
-    if (!hasCommits(repoRoot)) {
-      vscode.window.showErrorMessage(
-        `"${path.basename(repoRoot)}" has no commits yet. Please make an initial commit first.`
-      );
-      return;
-    }
 
     const repoName = path.basename(repoRoot);
 
