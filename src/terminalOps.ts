@@ -113,62 +113,6 @@ function isAgentTerminalName(name: string): boolean {
 }
 
 /**
- * Switch an existing tmux client from one session to another.
- * Finds the client TTY attached to fromSession and switches it to toSession.
- */
-function switchTmuxClient(fromSession: string, toSession: string): boolean {
-  try {
-    const output = execFileSync(
-      'tmux',
-      ['list-clients', '-t', fromSession, '-F', '#{client_tty}'],
-      { encoding: 'utf-8' },
-    );
-    const clientTty = output.trim().split('\n')[0];
-    if (!clientTty) {
-      log(`switchTmuxClient: no client found for session ${fromSession}`);
-      return false;
-    }
-    execFileSync('tmux', ['switch-client', '-c', clientTty, '-t', toSession]);
-    log(`switchTmuxClient: switched ${clientTty} from ${fromSession} to ${toSession}`);
-    return true;
-  } catch (e) {
-    log(`switchTmuxClient failed: ${e}`);
-    return false;
-  }
-}
-
-/**
- * Scan all tmux clients to find one attached to any ta-* session,
- * then switch it to the target session. Used as fallback when
- * currentTmuxSession is unknown (e.g. after extension reload).
- */
-function switchAnyTaClient(toSession: string): boolean {
-  try {
-    const output = execFileSync(
-      'tmux',
-      ['list-clients', '-F', '#{client_tty} #{session_name}'],
-      { encoding: 'utf-8' },
-    );
-    for (const line of output.trim().split('\n')) {
-      const spaceIdx = line.indexOf(' ');
-      if (spaceIdx < 0) { continue; }
-      const tty = line.substring(0, spaceIdx);
-      const session = line.substring(spaceIdx + 1);
-      if (session.startsWith('ta-')) {
-        execFileSync('tmux', ['switch-client', '-c', tty, '-t', toSession]);
-        log(`switchAnyTaClient: switched ${tty} (was ${session}) to ${toSession}`);
-        return true;
-      }
-    }
-    log('switchAnyTaClient: no ta-* client found');
-    return false;
-  } catch (e) {
-    log(`switchAnyTaClient failed: ${e}`);
-    return false;
-  }
-}
-
-/**
  * Try to recover the agent terminal reference from vscode.window.terminals.
  * Handles the case where the extension was reloaded but the terminal survived.
  */
@@ -251,21 +195,16 @@ function launchWithTmux(spec: Spec, cwd: string): vscode.Terminal {
     return agentTerminal;
   }
 
-  // Terminal alive — try to switch its tmux client in-place
+  // Need to show a DIFFERENT session. We deliberately do NOT use
+  // `tmux switch-client` here: when more than one client is attached to the
+  // source session (e.g. an external terminal, or a previous VSCode window,
+  // also attached), there is no reliable way to identify the client that
+  // belongs to *this* VSCode terminal — switch-client would move the wrong
+  // client and leave the VSCode view stuck on the old session. Instead dispose
+  // the current agent terminal and recreate one attached to the target session.
+  // The tmux session itself persists, so the running agent is unaffected.
   if (agentTerminal && isTerminalAlive(agentTerminal)) {
-    log(`attempting switch from ${currentTmuxSession} to ${sessionName}`);
-    const switched = currentTmuxSession
-      ? switchTmuxClient(currentTmuxSession, sessionName)
-      : switchAnyTaClient(sessionName);
-
-    if (switched) {
-      currentTmuxSession = sessionName;
-      agentTerminal.show();
-      return agentTerminal;
-    }
-
-    // Switch failed — dispose this terminal
-    log('switch failed, disposing terminal');
+    log(`disposing terminal on ${currentTmuxSession} to re-attach to ${sessionName}`);
     agentTerminal.dispose();
     agentTerminal = undefined;
     currentTmuxSession = undefined;
@@ -274,7 +213,7 @@ function launchWithTmux(spec: Spec, cwd: string): vscode.Terminal {
   // Clean up any stale Agent terminals before creating a new one
   disposeStaleAgentTerminals();
 
-  // Create fresh terminal
+  // Create fresh terminal attached to the target session
   agentTerminal = vscode.window.createTerminal({
     name: 'Agent',
     shellPath: 'tmux',
