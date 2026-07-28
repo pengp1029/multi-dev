@@ -629,6 +629,44 @@ export function ensureInitialCommit(repoPath: string): void {
 
 ---
 
+## Bug 20: 切换 spec 报 "Starting directory (cwd) ... does not exist"
+
+**现象**: 在一个窗口创建 spec 后，新开 VSCode 窗口切换到该 spec，agent 终端报 `The terminal process failed to launch: Starting directory (cwd) "/home/pp/.tmux-agent/worktrees/<spec>/<repo>" does not exist.`。
+
+**原因**:
+1. `createWorktree` 的 already-checked-out fallback 坏了：当目标分支（如 `master`）已在主仓库检出时，旧代码走 `git worktree add --detach <path>`（不带分支）再 `git checkout <branch>`，但第二步同样报 "already checked out" 失败，导致 worktree 目录根本没建成，只留下空壳。切换时 workspace folder 和 agent 终端的 cwd 都指向这个不存在的目录。
+2. git 本地化问题：用户 git 输出中文（"已经检出"），而 fallback 判断靠匹配英文 substring `"already checked out"`，中文环境下判断永远 false，直接抛错。
+3. `startSpec` 里的 `catch {}` 吞掉了 worktree 创建失败，隐藏了错误。
+
+**修复**:
+- `runGitAsync` 注入 `LC_ALL=C` / `LANG=C`，强制 git 用英文 stderr，保证 `"already checked out"` 等 substring 匹配稳定
+- `createWorktree` 的 already-checked-out fallback 改为一步 `git worktree add --detach <path> <branch>`（检出到该分支 tip，不再做会失败的 checkout）
+- 新增 `ensureSpecWorktrees(spec)`：切换/启动 spec 前检查每个 repo 的 worktree 目录，缺失就重新 `createWorktree`，实现 switch/start 自愈
+- `switchSpec` / `startSpec` 改用 `ensureSpecWorktrees`；`startSpec` 移除吞错的 `catch`，失败弹给用户
+
+**代码** (`src/gitOps.ts`):
+```typescript
+// runGitAsync: force C locale so stderr matching is stable
+const child = spawn('git', args, {
+  cwd, stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+});
+
+// already-checked-out fallback: one-step detached checkout at branch tip
+if (msg.includes('already checked out')) {
+  await runGitAsync(repoRoot, ['worktree', 'add', '--detach', worktreePath, branch]);
+}
+
+export async function ensureSpecWorktrees(spec: Spec): Promise<void> {
+  for (const repo of spec.repos) {
+    if (fs.existsSync(repo.worktreePath)) { continue; }
+    await createWorktree(repo.originPath, repo.worktreePath, repo.branch);
+  }
+}
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API

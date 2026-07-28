@@ -3,9 +3,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Spec, RepoEntry } from '../types';
 import { WORKTREES_DIR } from '../config';
-import { saveSpec } from '../store';
-import { isGitRepo, getRepoRoot, createWorktree } from '../gitOps';
-import { generateWorkspaceFile, getSpecWorktreeRoot } from '../workspaceOps';
+import { saveSpec, deleteSpec } from '../store';
+import { isGitRepo, getRepoRoot, createWorktree, removeWorktree } from '../gitOps';
+import { generateWorkspaceFile, getSpecWorktreeRoot, deleteWorkspaceFile } from '../workspaceOps';
 import { SpecWebviewProvider, CreateSpecData } from '../views/specWebview';
 
 export function registerCreateSpecCommand(
@@ -78,21 +78,39 @@ async function createSpecFromData(data: CreateSpecData, refreshViews: () => void
   refreshViews();
 
   // Create worktrees with a progress notification (async — does NOT block the
-  // extension host event loop).
+  // extension host event loop). If any worktree fails, roll back the spec we
+  // just persisted so we don't leave a half-created spec whose folders/terminal
+  // point at nonexistent directories.
   if (repos.length > 0) {
-    await vscode.window.withProgress(
-      {
-        location: vscode.ProgressLocation.Notification,
-        title: `Creating worktrees for spec "${data.name}"`,
-        cancellable: false,
-      },
-      async progress => {
-        for (const repo of repos) {
-          progress.report({ message: `${repo.name} (${repo.branch})` });
-          await createWorktree(repo.originPath, repo.worktreePath, repo.branch);
-        }
-      },
-    );
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Creating worktrees for spec "${data.name}"`,
+          cancellable: false,
+        },
+        async progress => {
+          for (const repo of repos) {
+            progress.report({ message: `${repo.name} (${repo.branch})` });
+            await createWorktree(repo.originPath, repo.worktreePath, repo.branch);
+          }
+        },
+      );
+    } catch (e) {
+      // Roll back everything we created before rethrowing so the caller's
+      // catch surfaces the error WITHOUT a lingering broken spec.
+      for (const repo of repos) {
+        try { removeWorktree(repo.originPath, repo.worktreePath); } catch { /* best effort */ }
+      }
+      try {
+        const root = getSpecWorktreeRoot(data.name);
+        if (fs.existsSync(root)) { fs.rmSync(root, { recursive: true, force: true }); }
+      } catch { /* best effort */ }
+      deleteWorkspaceFile(data.name);
+      deleteSpec(data.name);
+      refreshViews();
+      throw e;
+    }
   }
 
   refreshViews();
