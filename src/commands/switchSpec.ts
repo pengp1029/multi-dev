@@ -3,6 +3,7 @@ import { listSpecs, loadSpec } from '../store';
 import { getActiveSpecName, setActiveSpecName } from '../state';
 import { switchWorkspaceFolders, applyGitIsolationSettings, generateWorkspaceFile, openWorkspaceFile, isInManagedWorkspaceFile, updateCurrentWorkspaceFileActiveSpec } from '../workspaceOps';
 import { launchAgentTerminal } from '../terminalOps';
+import { ensureSpecWorktrees } from '../gitOps';
 import { refreshGitRepositories } from '../gitScm';
 import { SpecTreeItem } from '../views/specTreeProvider';
 
@@ -41,6 +42,19 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
     const spec = loadSpec(specName);
     if (!spec) {
       vscode.window.showErrorMessage(`Spec "${specName}" not found.`);
+      return;
+    }
+
+    // Ensure worktrees exist on disk BEFORE touching workspace folders or the
+    // terminal. A spec created in another window may have failed/aborted its
+    // worktree checkout, leaving the repo subfolders missing — which makes both
+    // the workspace folder and the agent terminal point at a nonexistent cwd
+    // ("Starting directory (cwd) ... does not exist").
+    try {
+      await ensureSpecWorktrees(spec);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      vscode.window.showErrorMessage(`Failed to prepare worktrees for "${spec.name}": ${msg}`);
       return;
     }
 

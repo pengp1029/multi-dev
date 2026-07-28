@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { loadSpec, saveSpec } from '../store';
 import { setActiveSpecName } from '../state';
-import { createWorktree } from '../gitOps';
+import { ensureSpecWorktrees } from '../gitOps';
 import { generateWorkspaceFile, openWorkspaceFile } from '../workspaceOps';
 import { SpecTreeItem } from '../views/specTreeProvider';
 
@@ -27,14 +27,10 @@ export function registerStartSpecCommand(refreshViews: () => void): vscode.Dispo
     }
 
     try {
-      // Create worktrees if they don't exist
-      for (const repo of spec.repos) {
-        try {
-          await createWorktree(repo.originPath, repo.worktreePath, repo.branch);
-        } catch {
-          // Worktree may already exist, skip
-        }
-      }
+      // Create worktrees if they don't exist (self-healing: re-checkout any
+      // missing worktree dir). Surface failures instead of swallowing them —
+      // a silent failure here left the spec pointing at a nonexistent cwd.
+      await ensureSpecWorktrees(spec);
 
       // Update status
       spec.status = 'active';

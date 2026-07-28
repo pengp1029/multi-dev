@@ -1,6 +1,7 @@
 import { execSync, spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Spec } from './types';
 
 /**
  * Run a git command asynchronously via `spawn` (does NOT block the extension
@@ -11,7 +12,14 @@ import * as path from 'path';
  */
 function runGitAsync(cwd: string, args: string[], timeoutMs = 0): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    // Force the C locale so git's stderr messages are always English. Callers
+    // match on substrings like "already checked out" to decide fallbacks; a
+    // localized git (e.g. zh_CN emitting "已经检出") would break that matching.
+    const child = spawn('git', args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, LC_ALL: 'C', LANG: 'C' },
+    });
     let stderr = '';
     child.stderr?.on('data', d => { stderr += d.toString(); });
     let timer: NodeJS.Timeout | undefined;
@@ -218,10 +226,11 @@ export async function createWorktree(originPath: string, worktreePath: string, b
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes('already checked out')) {
-        // Branch is checked out in main worktree or another worktree,
-        // create with a detached HEAD then checkout
-        await runGitAsync(repoRoot, ['worktree', 'add', '--detach', worktreePath]);
-        await runGitAsync(worktreePath, ['checkout', branch]);
+        // Branch is already checked out in the main repo or another worktree.
+        // Create the worktree with a DETACHED HEAD pointing at that branch's
+        // tip. We must NOT `git checkout <branch>` afterwards — that fails with
+        // the same "already checked out" error and leaves the worktree missing.
+        await runGitAsync(repoRoot, ['worktree', 'add', '--detach', worktreePath, branch]);
       } else {
         throw e;
       }
@@ -245,6 +254,23 @@ export async function createWorktree(originPath: string, worktreePath: string, b
       // Branch doesn't exist anywhere — create new branch based on current HEAD
       await runGitAsync(repoRoot, ['worktree', 'add', '-b', branch, worktreePath]);
     }
+  }
+}
+
+/**
+ * Ensure every repo in a spec has its worktree present on disk.
+ *
+ * A spec may have been created in another window where the worktree checkout
+ * failed, was aborted, or the directory was later deleted. Switching to such a
+ * spec would point the workspace folder and the agent terminal at a
+ * nonexistent cwd ("Starting directory (cwd) ... does not exist"). Re-run
+ * createWorktree for any repo whose worktree dir is missing so switch/start is
+ * self-healing.
+ */
+export async function ensureSpecWorktrees(spec: Spec): Promise<void> {
+  for (const repo of spec.repos) {
+    if (fs.existsSync(repo.worktreePath)) { continue; }
+    await createWorktree(repo.originPath, repo.worktreePath, repo.branch);
   }
 }
 
