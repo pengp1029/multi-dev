@@ -667,6 +667,41 @@ export async function ensureSpecWorktrees(spec: Spec): Promise<void> {
 
 ---
 
+## Bug 21: 切换 spec 后 tmux 视图没有切换
+
+**现象**: 切换到另一个 spec 后，VSCode 里的 Agent 终端视图仍停留在旧 spec 的 tmux session，没有跟着切过去。
+
+**原因**: `launchWithTmux` 用 `tmux switch-client` 在同一个 VSCode 终端里原地把 tmux client 从旧 session 切到新 session。定位"哪个 client 属于当前窗口"时，`switchTmuxClient` 用 `tmux list-clients -t <fromSession> -F '#{client_tty}'` 取第一个 client tty。但 VSCode 的 Terminal API 不暴露其底层 pty 的 tty，无法可靠映射"某个 VSCode 终端 → 某个 tmux client tty"。当同一个 session 有多个 client attach（用户开了多个 VSCode 窗口/外部终端都 attach 到同一个 `ta-*` session）时，取到的往往不是当前窗口的 tty，`switch-client` 作用在了别的 client 上，当前窗口视图纹丝不动。`switchAnyTaClient` fallback 更糟，随便抓一个 `ta-*` client 就切。
+
+**修复**:
+- 放弃 `switch-client` 方案（先天不可靠）
+- `launchWithTmux` 切到不同 session 时改为 dispose 当前 Agent 终端 + 新建一个 `tmux attach-session -t <目标session>` 的终端，tmux session 本身及其中运行的 agent 不受影响，只是换了个终端 attach 上去，视图必然跟着切
+- 删除不再使用的 `switchTmuxClient` / `switchAnyTaClient` 两个函数
+- 代价：切换时 Agent 终端会重建（闪一下），换来确定性正确
+
+**代码** (`src/terminalOps.ts`):
+```typescript
+// Need to show a DIFFERENT session. Do NOT use `tmux switch-client`:
+// VSCode's Terminal API doesn't expose its pty tty, so when multiple
+// clients share a session we can't tell which one is this window's.
+// Dispose + re-attach instead; the tmux session (and its agent) persists.
+if (agentTerminal && isTerminalAlive(agentTerminal)) {
+  agentTerminal.dispose();
+  agentTerminal = undefined;
+  currentTmuxSession = undefined;
+}
+disposeStaleAgentTerminals();
+agentTerminal = vscode.window.createTerminal({
+  name: 'Agent',
+  shellPath: 'tmux',
+  shellArgs: ['attach-session', '-t', sessionName],
+});
+agentTerminal.show();
+currentTmuxSession = sessionName;
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API
