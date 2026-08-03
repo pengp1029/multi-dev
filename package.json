@@ -83,6 +83,11 @@
         "command": "tmuxAgent.refreshSpecs",
         "title": "Tmux Agent: Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "tmuxAgent.openDashboard",
+        "title": "Tmux Agent: Open Dashboard",
+        "icon": "$(dashboard)"
       }
     ],
     "menus": {
@@ -94,6 +99,11 @@
         },
         {
           "command": "tmuxAgent.refreshSpecs",
+          "when": "view == tmuxAgentAllSpecs",
+          "group": "navigation"
+        },
+        {
+          "command": "tmuxAgent.openDashboard",
           "when": "view == tmuxAgentAllSpecs",
           "group": "navigation"
         },
@@ -128,6 +138,21 @@
           "when": "view == tmuxAgentCurrentSpec && viewItem == specActive"
         }
       ]
+    }
+  },
+  "configuration": {
+    "title": "Tmux Agent",
+    "properties": {
+      "tmuxAgent.notify.system": {
+        "type": "boolean",
+        "default": true,
+        "description": "AI 需确认/完成时发送系统通知（含声音）"
+      },
+      "tmuxAgent.notify.webhookUrl": {
+        "type": "string",
+        "default": "",
+        "description": "外部推送 webhook URL（留空则不推送）；POST { spec, status, message, updatedAt }"
+      }
     }
   },
   "scripts": {
