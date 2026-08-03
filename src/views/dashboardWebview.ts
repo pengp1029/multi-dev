@@ -148,42 +148,42 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   function renderData(groups){
     const root = document.getElementById('root');
-    root.innerHTML = groups.map(function(g){ return '<div class="project"><h2>▼ ' + g.project + '</h2><div class="cards">' + g.specs.map(cardHtml).join('') + '</div></div>'; }).join('');
+    root.innerHTML = groups.map(function(g){ return '<div class="project"><h2>▼ ' + escapeHtml(g.project) + '</h2><div class="cards">' + g.specs.map(cardHtml).join('') + '</div></div>'; }).join('');
   }
   function cardHtml(s){
     return '<div class="card' + (s.current ? ' current' : '') + '">' +
-      '<div><span class="badge ' + s.status + '">' + badge(s.status) + '</span><strong>' + s.name + '</strong></div>' +
-      '<div class="meta">' + s.branch + '</div>' +
+      '<div><span class="badge ' + s.status + '">' + badge(s.status) + '</span><strong>' + escapeHtml(s.name) + '</strong></div>' +
+      '<div class="meta">' + escapeHtml(s.branch) + '</div>' +
       '<div class="meta">' + s.repos + ' repos · ' + s.changed + ' changed</div>' +
       '<div class="meta ' + s.status + '">' + badge(s.status) + ' ' + LABEL[s.status] + ' ' + relTime(s.updatedAt) + '</div>' +
       '<div class="row">' +
-        '<button onclick="send(\'enter\',\'' + s.name + '\')>进入</button>' +
-        '<button onclick="send(\'diff\',\'' + s.name + '\')">diff</button>' +
-        '<button onclick="send(\'commit\',\'' + s.name + '\')">提交</button>' +
-        '<button onclick="send(\'peek\',\'' + s.name + '\')">预览</button>' +
+        '<button onclick="send(\'enter\',\'' + jsStr(s.name) + '\')">进入</button>' +
+        '<button onclick="send(\'diff\',\'' + jsStr(s.name) + '\')">diff</button>' +
+        '<button onclick="send(\'commit\',\'' + jsStr(s.name) + '\')">提交</button>' +
+        '<button onclick="send(\'peek\',\'' + jsStr(s.name) + '\')">预览</button>' +
       '</div></div>';
   }
   function badge(st){ return st==='working'?'●':st==='waiting_confirm'?'⚠':st==='done'?'✓':'○'; }
 
   function fileList(summary){
-    return summary.repos.map(function(r){ return r.files.map(function(f){ return '<div class="file">' + f.code + ' ' + r.name + '/' + f.path + '</div>'; }).join(''); }).join('') || '<div>无变动</div>';
+    return summary.repos.map(function(r){ return r.files.map(function(f){ return '<div class="file">' + escapeHtml(f.code) + ' ' + escapeHtml(r.name) + '/' + escapeHtml(f.path) + '</div>'; }).join(''); }).join('') || '<div>无变动</div>';
   }
   function alertDiff(m){
     const peek=document.getElementById('peek');
     peek.style.display='block';
-    peek.innerHTML='<h3>变动: ' + m.spec + '</h3>' + fileList(m.summary) +
+    peek.innerHTML='<h3>变动: ' + escapeHtml(m.spec) + '</h3>' + fileList(m.summary) +
       '<div class="row"><button onclick="closePeek()">关闭</button></div>';
   }
   function renderPeek(m){
     const peek=document.getElementById('peek');
     peek.style.display='block';
-    peek.innerHTML='<h3>PEEK: ' + m.spec + ' (只读)</h3>' +
+    peek.innerHTML='<h3>PEEK: ' + escapeHtml(m.spec) + ' (只读)</h3>' +
       '<h4>AI 最近输出</h4><pre>' + escapeHtml(m.pane) + '</pre>' +
       '<h4>变动</h4>' + fileList(m.summary) +
       '<div class="row"><input id="replyBox" placeholder="输入确认/指令" style="flex:1"/>' +
       '<button onclick="doReply()">发送</button>' +
-      '<button onclick="send(\'approve\',\'' + m.spec + '\')">批准继续</button>' +
-      '<button onclick="send(\'enter\',\'' + m.spec + '\')">进入深度编辑</button>' +
+      '<button onclick="send(\'approve\',\'' + jsStr(m.spec) + '\')">批准继续</button>' +
+      '<button onclick="send(\'enter\',\'' + jsStr(m.spec) + '\')">进入深度编辑</button>' +
       '<button onclick="closePeek()">关闭</button></div>';
     peek.dataset.spec = m.spec;
   }
@@ -194,4 +194,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   }
   function closePeek(){ document.getElementById('peek').style.display='none'; }
   function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  // Escape a value for safe embedding inside a single-quoted JS string in an onclick attribute.
+  function jsStr(s){ return escapeHtml((s||'').replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")); }
 </script></body></html>`;

@@ -20,7 +20,6 @@ function label(status: SpecStatus): string {
 
 /** Fire system notification + optional webhook + VSCode toast, then jump on click. */
 export function notify(specName: string, status: SpecStatus, message: string | undefined, onJump: () => void): void {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const vscode = require('vscode');
   const cfg = vscode.workspace.getConfiguration('tmuxAgent');
   const title = `ducc · ${specName}`;
