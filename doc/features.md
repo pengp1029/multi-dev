@@ -8,14 +8,17 @@
 
 **流程**:
 1. 打开 Webview 表单，填写 Spec 名称、描述、feature branch、agent 命令
-2. 通过 Browse 按钮选择多个 Git 仓库
-3. 点击 Create Spec：
+2. 在 Project 下拉中选择归属项目（`(Ungrouped)` / 已有 Project / `➕New` 新建）
+3. 通过 Browse 按钮选择多个 Git 仓库
+4. 点击 Create Spec：
    - 验证每个仓库是否是 git repo 且有 commits
    - 为每个仓库创建 git worktree（`~/.tmux-agent/worktrees/<spec>/<repo>/`）
-   - 保存 Spec YAML 配置
+   - 保存 Spec YAML 配置（含 `project_name` 字段）
+   - 若选择或新建了 Project，更新 Project 的 features 列表并保存 Project YAML
    - 生成 `.code-workspace` 文件
    - 应用 git 隔离设置
-   - 刷新侧边栏视图（新 Spec 出现在 All Specs 列表中）
+   - 调用 `installHooks` 将 `scripts/report-state.js` 路径写入 spec worktree 根目录的 `.claude/settings.json`，注册 Notification hook（→ `waiting_confirm`）和 Stop hook（→ `done`）
+   - 刷新侧边栏视图（新 Spec 出现在对应 Project 分组下）
    - **不会自动切换到新 Spec**，用户可通过 All Specs 视图手动切换
 
 ### 2. 启动 Spec (`tmuxAgent.startSpec`)
@@ -94,7 +97,118 @@
 
 重新读取 YAML 文件和 git status，刷新两个 TreeView。
 
-## Workspace 文件夹结构
+### 14. 项目分级（Project → Feature 两层模型）
+
+**用途**: 将多个 Spec（Feature）归组到一个 Project 下，在侧边栏和 Dashboard 中以两层树形结构展示，便于在大量并发任务中快速定位。
+
+**存储**: `~/.tmux-agent/projects/<name>.yaml`，每个文件描述一个 Project。Spec YAML 通过 `project_name` 字段记录所属 Project；无 `project_name` 的 Spec 自动归入虚拟 `Ungrouped` 组（不写入磁盘）。
+
+**侧边栏显示**:
+
+```
+▼ my-project
+   ● user-auth  ●工作中   [✕]
+   ○ payment    ○空闲  [▸] [✕]
+▼ Ungrouped
+   ○ refactor   ○空闲  [▸] [✕]
+```
+
+**CRUD API** (`projectStore.ts`):
+
+| 函数 | 说明 |
+|------|------|
+| `saveProject(project)` | 序列化并写入 Project YAML |
+| `loadProject(name)` | 按名称读取并反序列化 Project |
+| `listProjects()` | 返回所有已保存的 Project 列表 |
+| `deleteProject(name)` | 删除指定 Project 的 YAML 文件 |
+| `groupSpecsByProject(specs, projects)` | 纯函数，返回 `ProjectGroup[]`；未匹配的 Spec 归入 `Ungrouped` |
+
+### 15. 总控台 Dashboard (`tmuxAgent.openDashboard`)
+
+**入口**: 侧边栏 All Specs 视图标题栏的 Dashboard 图标按钮，或命令面板 `tmuxAgent.openDashboard`。
+
+**卡片墙**: 按 Project 分组展示所有 Spec 卡片。每张卡片包含：
+
+| 字段 | 说明 |
+|------|------|
+| Feature 名称 + 分支 | Spec 的 name 和 featureBranch |
+| Repos 数量 | 该 Spec 关联的仓库数 |
+| 变更文件数 | 聚合所有 worktree 的 `git status --porcelain` 结果 |
+| AI 状态徽章 | ●工作中 / ⚠等确认 / ✓完成 / ○空闲 |
+| 相对时间 | 最后状态更新的相对时间（如"3 分钟前"） |
+| 操作按钮 | 进入（switchSpec）/ diff / 提交（commitSpec）/ 预览（Peek） |
+
+**Peek 面板**（右侧滑出，只读审阅，不切换 workspace）:
+- tmux `capture-pane` 重放 AI 终端输出
+- 聚合 diff 展示所有 worktree 的变更
+- 回复框：`send-keys` 向 tmux 会话发送文本
+- 操作按钮：批准继续 / 进入深度编辑（switchSpec）
+
+**数据流**: 扩展是唯一的数据源，通过 `render()` 向 Webview postMessage；Webview 通过 `postMessage` 回传操作请求（单向数据流，扩展处理所有副作用）。
+
+**实时更新**: `StateWatcher.onDidChangeState` 触发 `DashboardPanel.current?.render()`，面板始终展示最新 AI 状态。
+
+### 16. AI 状态提醒（三通道通知）
+
+**触发**: ducc 的 Notification hook（AI 等待用户确认时）触发 → `waiting_confirm`；Stop hook（AI 回合结束时）触发 → `done`。hook 脚本 `scripts/report-state.js` 由 `hookInstaller.ts` 在创建 Spec 时写入 worktree 根目录的 `.claude/settings.json`。
+
+**状态**: `SpecStatus = 'working' | 'waiting_confirm' | 'done' | 'idle'`
+
+状态存储于 `~/.tmux-agent/state/<spec>.json`：
+
+```json
+{ "status": "waiting_confirm", "message": "optional context", "updatedAt": "2026-08-03T10:00:00.000Z" }
+```
+
+**去重**: `shouldNotify(prev, next)` 纯函数，仅当 `prev !== next` 时返回 `true`，避免重复推送同一状态。
+
+**三个通知渠道**:
+
+| 渠道 | 实现 | 平台 |
+|------|------|------|
+| 系统通知 | `execFile` 调用原生命令 | macOS: `osascript`；Linux: `notify-send`；Windows: PowerShell BurntToast |
+| Webhook POST | fire-and-forget HTTP/HTTPS，3s 超时，失败静默 | 全平台，需在配置中设置 URL |
+| VSCode Toast | `vscode.window.showInformationMessage` | 全平台，带"进入"按钮，点击后 `switchSpec` |
+
+**配置**:
+
+| 配置键 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `tmuxAgent.notify.system` | boolean | `true` | 是否启用系统桌面通知 |
+| `tmuxAgent.notify.webhookUrl` | string | `""` | Webhook URL；为空时跳过 |
+
+**用途**: 将多个 Spec 归组到一个 Project 下，实现任务的逻辑分组管理。
+
+**存储**: Project 配置保存在 `~/.tmux-agent/projects/<name>.yaml`，每个 YAML 文件描述一个 Project（名称、描述、关联的 Spec 列表等）。
+
+**CRUD API**:
+
+| 函数 | 说明 |
+|------|------|
+| `saveProject(project)` | 序列化并写入 Project YAML |
+| `loadProject(name)` | 按名称读取并反序列化 Project |
+| `listProjects()` | 返回所有已保存的 Project 列表 |
+| `deleteProject(name)` | 删除指定 Project 的 YAML 文件 |
+
+**分组函数** (`groupSpecsByProject`):
+
+纯函数，接收 Spec 列表和 Project 列表，返回 `ProjectGroup[]`。每个 `ProjectGroup` 包含一个 Project 及其下属的 Spec 子列表。未被任何 Project 引用的 Spec 自动归入虚拟组 `Ungrouped`（不写入磁盘）。`ProjectGroup` 接口由 `projectStore.ts` 导出。
+
+### 10. AI 状态持久化 (`specState.ts`)
+
+**用途**: 为每个 Spec 持久化 AI 运行状态（`idle` / `running` / `waiting`），供 Dashboard 等视图实时展示。
+
+**存储**: 状态文件保存在 `~/.tmux-agent/state/<specName>.json`，每个文件包含当前状态字段。
+
+**API**:
+
+| 函数 | 说明 |
+|------|------|
+| `stateFilePath(specName)` | 返回指定 Spec 的状态文件绝对路径 |
+| `readSpecState(specName)` | 读取并解析状态文件，返回当前 AI 状态；文件缺失、JSON 损坏或未知状态值均返回 `"idle"` |
+| `writeSpecState(specName, status)` | 将指定状态序列化写入对应的 JSON 文件 |
+
+**容错设计**: 所有读取失败（ENOENT、JSON parse error、unknown status）均静默回退为 `idle`，不向上层抛出异常，保证扩展在状态文件不完整时仍可正常运行。
 
 切换或启动一个 Spec 时，VSCode 资源管理器中的文件夹顺序为：
 
@@ -228,3 +342,100 @@ AI 根据 CLAUDE.md 中定义的规则进行判断：
 - `.claude/hooks/auto-commit-prompt.sh` — Stop hook 脚本，检测变更并注入提示
 - `.claude/settings.json` — 注册 Stop hook
 - `CLAUDE.md` — 定义提交决策规则段落
+
+### 11. 三通道通知 (`notifier.ts`)
+
+**用途**: 当 Spec 的 AI 状态发生变化时，通过多个渠道向用户发送通知，避免重复推送。
+
+**触发条件**: 状态从 `prev` 转变为 `next`，由纯函数 `shouldNotify(prev, next)` 判断是否需要通知（相同状态不重复通知）。
+
+**三个通知渠道**:
+
+| 渠道 | 实现方式 | 说明 |
+|------|----------|------|
+| 系统通知 | `sendSystemNotification()` — 平台感知，调用 `execFile` | macOS: `osascript`；Linux: `notify-send`；Windows: PowerShell `New-BurntToastNotification` |
+| Webhook POST | `postWebhook()` — fire-and-forget HTTP/HTTPS | 读取用户配置的 URL，3 秒超时，失败静默忽略 |
+| VSCode Toast | `vscode.window.showInformationMessage()` | 带"进入"按钮，点击后切换到对应 Spec |
+
+**API**:
+
+| 函数 | 说明 |
+|------|------|
+| `shouldNotify(prev, next)` | 纯函数，`prev === next` 时返回 `false`，否则返回 `true`；用于去重 |
+| `notify(specName, prev, next)` | 三通道分发入口；先调用 `shouldNotify`，若无需通知则提前返回 |
+| `sendSystemNotification(title, body)` | 平台感知系统通知，通过 `execFile` 调用原生命令 |
+| `postWebhook(url, payload)` | fire-and-forget HTTPS/HTTP POST，3 秒超时，失败不抛出 |
+
+**懒加载设计**: `notify()` 内部通过 `require('vscode')` 懒加载 VSCode API，使 `notifier.ts` 在纯 Node.js 单元测试环境中可直接测试，无需 mock VSCode 宿主。
+
+**单元测试**: `src/test/notifier.test.ts` — 5 个用例覆盖 `shouldNotify` 的各种状态转换场景。
+
+### 12. 状态变更监听器 (`stateWatcher.ts`)
+
+**用途**: 监听 `~/.tmux-agent/state/` 目录下的状态文件变化，检测 Spec AI 状态的实际变更，并以事件方式通知上层模块，驱动通知分发、视图刷新等后续逻辑。
+
+
+**实现机制**:
+
+1. 使用 `fs.watch()` 监听整个 `state/` 目录
+2. 文件变更事件经过 100ms 防抖处理，合并短时间内的多次写入
+3. 读取变更文件对应的 Spec 状态，与内存缓存（`Map<specName, SpecStatus>`）对比
+4. 仅当状态实际发生改变时，才触发 `onDidChangeState` 事件
+
+**事件结构**:
+
+```typescript
+interface StateChangeEvent {
+  specName: string;   // 状态发生变化的 Spec 名称
+  prev: SpecStatus;   // 变化前的状态
+  next: SpecStatus;   // 变化后的新状态
+}
+```
+
+**API**:
+
+| 函数 / 属性 | 说明 |
+|------------|------|
+| `new StateWatcher()` | 构造函数，启动目录监听，初始化内存缓存 |
+| `onDidChangeState` | 事件订阅接口，注册状态变更回调 |
+| `dispose()` | 停止监听，释放资源 |
+
+**设计约束**: `stateWatcher.ts` 不导入 `vscode` 模块，使用自包含的事件发射器实现，可在 `ts-node` 环境下直接进行单元测试，无需 VSCode 扩展宿主。
+
+**单元测试**: `src/test/stateWatcher.test.ts` — 覆盖防抖逻辑、状态变更检测、重复状态不触发事件等场景。
+
+### 13. Dashboard 命令与状态联动 (`tmuxAgent.openDashboard`)
+
+**用途**: 在 VSCode Webview 面板中展示所有 Spec 的实时 AI 运行状态（Dashboard），并在扩展激活时启动 `StateWatcher`，将状态变更事件与视图刷新、通知分发联动。
+
+**入口**: 侧边栏 All Specs 视图标题栏的 Dashboard 图标按钮，或命令面板中的 `tmuxAgent.openDashboard`。
+
+**流程**:
+1. 调用 `DashboardPanel.createOrShow(context.extensionUri)` 打开或聚焦 Dashboard Webview 面板
+2. 面板首次创建时从 `store.ts` + `specState.ts` 读取所有 Spec 及其当前状态并渲染
+
+**状态联动（StateWatcher 集成）**:
+
+扩展激活（`activate()`）时启动 `StateWatcher`，订阅 `onDidChangeState` 事件，每次状态变更触发以下三个动作（顺序执行）：
+
+```
+StateWatcher.onDidChangeState({ specName, prev, next })
+    ↓
+1. refreshViews()                         — 刷新侧边栏 TreeView
+2. DashboardPanel.current?.render()       — 刷新 Dashboard Webview（如已打开）
+3. notify(specName, prev, next)           — 三通道通知分发（shouldNotify 去重）
+```
+
+**配置项** (`package.json` contributes.configuration):
+
+| 配置键 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `tmuxAgent.notify.system` | `boolean` | `true` | 是否启用系统级通知（桌面弹窗） |
+| `tmuxAgent.notify.webhookUrl` | `string` | `""` | Webhook 通知的目标 URL；为空时跳过 Webhook 推送 |
+
+**菜单注册**: `tmuxAgent.openDashboard` 命令注册在 `view/title` 菜单的 `tmuxAgentAllSpecs` 视图中，与现有的 `+`、`↻` 按钮并列显示。
+
+**涉及文件**:
+- `src/extension.ts` — 注册命令、启动 `StateWatcher`、绑定 `onDidChangeState` 监听器
+- `src/views/dashboardWebview.ts` — `DashboardPanel` 类，Webview 面板的创建与渲染
+- `package.json` — `contributes.commands`、`contributes.menus.view/title`、`contributes.configuration`
