@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { Spec, RepoEntry } from '../types';
+import { Spec, RepoEntry, Project } from '../types';
 import { WORKTREES_DIR } from '../config';
 import { saveSpec, deleteSpec } from '../store';
 import { isGitRepo, getRepoRoot, createWorktree, removeWorktree } from '../gitOps';
 import { generateWorkspaceFile, getSpecWorktreeRoot, deleteWorkspaceFile } from '../workspaceOps';
 import { SpecWebviewProvider, CreateSpecData } from '../views/specWebview';
+import { listProjects, saveProject, loadProject } from '../projectStore';
+import { installHooks } from '../hookInstaller';
 
 export function registerCreateSpecCommand(
   context: vscode.ExtensionContext,
@@ -17,9 +19,10 @@ export function registerCreateSpecCommand(
     console.log('[tmux-agent] Command tmuxAgent.createSpec executed');
     const webview = new SpecWebviewProvider(
       context.extensionUri,
+      listProjects().map(p => p.name),
       async (data: CreateSpecData) => {
         try {
-          await createSpecFromData(data, refreshViews);
+          await createSpecFromData(data, refreshViews, context.extensionPath);
           vscode.window.showInformationMessage(`Spec "${data.name}" created successfully!`);
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -32,7 +35,7 @@ export function registerCreateSpecCommand(
   return disposable;
 }
 
-async function createSpecFromData(data: CreateSpecData, refreshViews: () => void): Promise<void> {
+async function createSpecFromData(data: CreateSpecData, refreshViews: () => void, extensionPath: string): Promise<void> {
   // Validate and resolve repos
   const resolvedRepos: Array<{ path: string; name: string; root: string }> = [];
   for (const repo of data.repos) {
@@ -59,6 +62,7 @@ async function createSpecFromData(data: CreateSpecData, refreshViews: () => void
     agentCommand: data.agentCommand,
     repos,
     createdAt: new Date().toISOString(),
+    projectName: data.projectName,
   };
 
   // Ensure worktree root directory exists (even for specs with no repos)
@@ -111,6 +115,26 @@ async function createSpecFromData(data: CreateSpecData, refreshViews: () => void
       refreshViews();
       throw e;
     }
+  }
+
+  // Update the owning project's feature list (create the project if new).
+  if (data.projectName) {
+    const existing = loadProject(data.projectName);
+    if (existing) {
+      if (!existing.features.includes(spec.name)) { existing.features.push(spec.name); }
+      saveProject(existing);
+    } else {
+      const p: Project = { name: data.projectName, features: [spec.name], createdAt: new Date().toISOString() };
+      saveProject(p);
+    }
+  }
+
+  // Inject the AI status-reporting hook into this managed worktree only.
+  try {
+    const scriptPath = path.join(extensionPath, 'scripts', 'report-state.js');
+    installHooks(spec, scriptPath);
+  } catch (e) {
+    console.error('[tmux-agent] installHooks failed (non-fatal):', e);
   }
 
   refreshViews();

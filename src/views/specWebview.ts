@@ -6,6 +6,7 @@ export class SpecWebviewProvider {
 
   constructor(
     private readonly extensionUri: vscode.Uri,
+    private readonly existingProjects: string[],
     private readonly onCreateSpec: (data: CreateSpecData) => void,
   ) {}
 
@@ -58,6 +59,7 @@ export class SpecWebviewProvider {
   }
 
   private getCreateSpecHtml(): string {
+    const projectsJson = JSON.stringify(this.existingProjects);
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -150,6 +152,13 @@ export class SpecWebviewProvider {
   </div>
 
   <div class="form-group">
+    <label for="project">Project</label>
+    <select id="project"></select>
+    <input type="text" id="newProject" placeholder="New project name" style="display:none;margin-top:6px;" />
+    <div class="hint">Group this feature under a project, or create a new one.</div>
+  </div>
+
+  <div class="form-group">
     <label for="branch">Feature Branch</label>
     <input type="text" id="branch" placeholder="auto-filled: feat/<name>" />
     <div class="hint">Leave empty to auto-generate from spec name</div>
@@ -177,6 +186,16 @@ export class SpecWebviewProvider {
   <script>
     const vscode = acquireVsCodeApi();
     const repos = [];
+    const existingProjects = ${projectsJson};
+    (function initProjects() {
+      const sel = document.getElementById('project');
+      const optNew = '<option value="__new__">➕ New project…</option>';
+      const optNone = '<option value="">(Ungrouped)</option>';
+      sel.innerHTML = optNone + existingProjects.map(function(p){return '<option value="'+p+'">'+p+'</option>';}).join('') + optNew;
+      sel.addEventListener('change', function() {
+        document.getElementById('newProject').style.display = this.value === '__new__' ? 'block' : 'none';
+      });
+    })();
 
     document.getElementById('name').addEventListener('input', function() {
       const branchInput = document.getElementById('branch');
@@ -231,6 +250,10 @@ export class SpecWebviewProvider {
       }
       // Remove the check that requires at least one repo - allow empty specs
       const branch = document.getElementById('branch').value.trim() || ('feat/' + name);
+      const projSel = document.getElementById('project').value;
+      const projectName = projSel === '__new__'
+        ? (document.getElementById('newProject').value.trim() || undefined)
+        : (projSel || undefined);
       vscode.postMessage({
         type: 'createSpec',
         data: {
@@ -239,6 +262,7 @@ export class SpecWebviewProvider {
           featureBranch: branch,
           agentCommand: document.getElementById('agent').value.trim() || 'ducc',
           repos: repos.map(r => ({ path: r.path, name: r.name })),
+          projectName: projectName,
         }
       });
     });
@@ -254,4 +278,5 @@ export interface CreateSpecData {
   featureBranch: string;
   agentCommand: string;
   repos: Array<{ path: string; name: string }>;
+  projectName?: string;
 }
