@@ -196,4 +196,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   // Escape a value for safe embedding inside a single-quoted JS string in an onclick attribute.
   function jsStr(s){ return escapeHtml((s||'').replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")); }
+
+  // Request initial data once the script has loaded. The extension may have
+  // already posted a 'data' message before this listener existed (constructor
+  // races the webview boot), so pull explicitly instead of relying on that push.
+  send('refresh');
 </script></body></html>`;

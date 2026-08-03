@@ -213,11 +213,15 @@ function launchWithTmux(spec: Spec, cwd: string): vscode.Terminal {
   // Clean up any stale Agent terminals before creating a new one
   disposeStaleAgentTerminals();
 
-  // Create fresh terminal attached to the target session
+  // Create fresh terminal attached to the target session.
+  // `-d` detaches any other client already attached to this session, so this
+  // VSCode terminal becomes the sole client. Without it, tmux sizes the window
+  // to the SMALLEST attached client (a leftover VSCode/external client), which
+  // shrinks the pane and leaves blank columns on the right.
   agentTerminal = vscode.window.createTerminal({
     name: 'Agent',
     shellPath: 'tmux',
-    shellArgs: ['attach-session', '-t', sessionName],
+    shellArgs: ['attach-session', '-d', '-t', sessionName],
   });
   agentTerminal.show();
   currentTmuxSession = sessionName;
