@@ -61,6 +61,7 @@ function specToYaml(spec: Spec): Record<string, unknown> {
       branch: r.branch,
     })),
     created_at: spec.createdAt,
+    project_name: spec.projectName,
   };
 }
 
@@ -80,5 +81,6 @@ function yamlToSpec(raw: Record<string, unknown>): Spec {
     agentCommand: (raw['agent_command'] as string) || 'ducc',
     repos,
     createdAt: (raw['created_at'] as string) || new Date().toISOString(),
+    projectName: (raw['project_name'] as string) || undefined,
   };
 }
