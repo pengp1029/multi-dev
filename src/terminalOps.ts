@@ -76,7 +76,7 @@ function isTmuxAvailable(): boolean {
  * Sanitized tmux session name for a spec.
  * Prefix "ta-" (tmux-agent) to avoid conflicts with user sessions.
  */
-function getTmuxSessionName(specName: string): string {
+export function getTmuxSessionName(specName: string): string {
   return `ta-${specName.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
 }
 
@@ -278,4 +278,45 @@ export function registerTerminalCloseHandler(context: vscode.ExtensionContext): 
       }
     })
   );
+}
+
+/** Pure: tmux args to print the last `lines` rows of a session's pane. */
+export function buildCaptureArgs(sessionName: string, lines: number): string[] {
+  return ['capture-pane', '-p', '-t', sessionName, '-S', `-${lines}`];
+}
+
+/** Pure: tmux args to send a literal line + Enter into a session. */
+export function buildSendKeysArgs(sessionName: string, text: string): string[] {
+  return ['send-keys', '-t', sessionName, text, 'Enter'];
+}
+
+/**
+ * Capture the tail of a spec's tmux session pane for the Peek panel.
+ * Returns undefined when tmux is unavailable or the session doesn't exist.
+ */
+export function capturePane(specName: string, lines = 200): string | undefined {
+  if (!isTmuxAvailable()) { return undefined; }
+  const session = getTmuxSessionName(specName);
+  if (!tmuxSessionExists(session)) { return undefined; }
+  try {
+    return execFileSync('tmux', buildCaptureArgs(session, lines), { encoding: 'utf-8' });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Send a reply line into a spec's tmux session (Peek reply / approve).
+ * Returns false when tmux is unavailable or the session doesn't exist.
+ */
+export function sendReply(specName: string, text: string): boolean {
+  if (!isTmuxAvailable()) { return false; }
+  const session = getTmuxSessionName(specName);
+  if (!tmuxSessionExists(session)) { return false; }
+  try {
+    execFileSync('tmux', buildSendKeysArgs(session, text));
+    return true;
+  } catch {
+    return false;
+  }
 }
