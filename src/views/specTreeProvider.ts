@@ -17,6 +17,20 @@ function statusBadge(status: SpecStatus): string {
   }
 }
 
+/**
+ * Colored status icon for the tree. TreeItem labels cannot be colored, so the
+ * AI status color is carried by a ThemeIcon + ThemeColor (codicon id + theme
+ * color id) instead of a bare unicode char in the label.
+ */
+function statusIcon(status: SpecStatus): vscode.ThemeIcon {
+  switch (status) {
+    case 'working': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.blue'));
+    case 'waiting_confirm': return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+    case 'done': return new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
+    default: return new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('descriptionForeground'));
+  }
+}
+
 // --- Tree item types ---
 
 export class SpecTreeItem extends vscode.TreeItem {
@@ -28,10 +42,10 @@ export class SpecTreeItem extends vscode.TreeItem {
     super(spec.name, collapsibleState);
 
     const aiStatus = readSpecState(spec.name).status;
-    const badge = statusBadge(aiStatus);
     const currentTag = isCurrent ? ' ← current' : '';
-    this.label = `${badge} ${spec.name}${currentTag}`;
-    this.description = `${spec.featureBranch} · ${spec.repos.length} repos`;
+    this.label = `${spec.name}${currentTag}`;
+    this.iconPath = statusIcon(aiStatus);
+    this.description = `${statusBadge(aiStatus)} ${spec.featureBranch} · ${spec.repos.length} repos`;
     this.tooltip = `${spec.name}\n${spec.description}\nBranch: ${spec.featureBranch}\nStatus: ${spec.status}\nRepos: ${spec.repos.length}`;
 
     if (isCurrent) {

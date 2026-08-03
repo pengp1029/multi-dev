@@ -14,6 +14,26 @@ export function shouldNotify(prev: SpecStatus, next: SpecStatus): boolean {
   return prev !== next;
 }
 
+// Per-spec cooldown so a spec cannot produce more than one intrusive
+// notification per window. ducc's Stop and Notification hooks interleave
+// (each turn ends Stop→done then Notification→waiting_confirm), and idle
+// re-notifications re-fire the hook; without a cooldown that oscillation
+// spams the user with toasts while they haven't replied.
+const NOTIFY_COOLDOWN_MS = 8000;
+const _lastNotify = new Map<string, number>();
+
+/**
+ * Stateful dedup gate: returns true at most once per spec per cooldown window,
+ * recording the timestamp when it allows. Kept separate from the pure
+ * `shouldNotify` so the transition logic stays unit-testable.
+ */
+export function passNotifyCooldown(specName: string, now: number = Date.now(), cooldownMs: number = NOTIFY_COOLDOWN_MS): boolean {
+  const last = _lastNotify.get(specName);
+  if (last !== undefined && now - last < cooldownMs) { return false; }
+  _lastNotify.set(specName, now);
+  return true;
+}
+
 function label(status: SpecStatus): string {
   return status === 'waiting_confirm' ? '等待你确认' : status === 'done' ? '任务完成' : status;
 }

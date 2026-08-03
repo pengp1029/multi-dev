@@ -15,7 +15,7 @@ import { registerCleanupSpecCommand } from './commands/cleanupSpec';
 import { registerDeleteSpecCommand } from './commands/deleteSpec';
 import { DashboardPanel } from './views/dashboardWebview';
 import { StateWatcher } from './stateWatcher';
-import { shouldNotify, notify } from './notifier';
+import { shouldNotify, passNotifyCooldown, notify } from './notifier';
 import { readSpecState } from './specState';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -71,8 +71,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Refresh sidebar badges and dashboard cards on every change.
     refreshViews();
     DashboardPanel.current?.render();
-    // Intrusive notification only for waiting_confirm/done transitions.
-    if (shouldNotify(prev, next)) {
+    // Intrusive notification only for waiting_confirm/done transitions,
+    // and rate-limited per spec so unanswered prompts don't spam toasts.
+    if (shouldNotify(prev, next) && passNotifyCooldown(specName)) {
       notify(specName, next, readSpecState(specName).message, () => {
         vscode.commands.executeCommand('tmuxAgent.switchSpec', { spec: loadSpec(specName) });
       });

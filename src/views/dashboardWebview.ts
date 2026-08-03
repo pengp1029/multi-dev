@@ -32,7 +32,6 @@ export class DashboardPanel {
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.render();
   }
-
   /** Push fresh state to the webview. Extension is the source of truth. */
   render(): void {
     const active = getActiveSpecName();
@@ -106,6 +105,7 @@ export class DashboardPanel {
 
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><style>
+  html, body { background: var(--vscode-editor-background, #1e1e1e); }
   body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 12px; }
   .toolbar { display:flex; gap:8px; margin-bottom:12px; }
   .project { margin-bottom:18px; }
@@ -129,7 +129,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <div class="toolbar">
     <button onclick="send('refresh')">&#8635; Refresh</button>
   </div>
-  <div id="root"></div>
+  <div id="root">加载中…</div>
   <div id="peek"></div>
 <script>
   const vscode = acquireVsCodeApi();
@@ -140,14 +140,19 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   window.addEventListener('message', function(e){
     const m = e.data;
-    if (m.type === 'data') renderData(m.groups);
-    if (m.type === 'peek') renderPeek(m);
-    if (m.type === 'diff') alertDiff(m);
-    if (m.type === 'replyResult') { if(!m.ok) alert('回复失败：会话不存在，请先「进入」重启'); else send('peek', m.spec); }
+    try {
+      if (m.type === 'data') renderData(m.groups);
+      if (m.type === 'peek') renderPeek(m);
+      if (m.type === 'diff') alertDiff(m);
+      if (m.type === 'replyResult') { if(!m.ok) alert('回复失败：会话不存在，请先「进入」重启'); else send('peek', m.spec); }
+    } catch (err) {
+      document.getElementById('root').textContent = '渲染出错: ' + (err && err.message ? err.message : err);
+    }
   });
 
   function renderData(groups){
     const root = document.getElementById('root');
+    if (!groups || !groups.length) { root.textContent = '暂无项目/feature。点击侧边栏 (+) 创建。'; return; }
     root.innerHTML = groups.map(function(g){ return '<div class="project"><h2>▼ ' + escapeHtml(g.project) + '</h2><div class="cards">' + g.specs.map(cardHtml).join('') + '</div></div>'; }).join('');
   }
   function cardHtml(s){
