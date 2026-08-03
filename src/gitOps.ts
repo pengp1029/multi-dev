@@ -364,3 +364,44 @@ export function getCurrentBranch(worktreePath: string): string {
     return 'unknown';
   }
 }
+
+export interface ChangedFile {
+  path: string;
+  code: string;   // 2-char porcelain status, e.g. " M", "??", "A "
+}
+export interface RepoChanges {
+  name: string;
+  worktreePath: string;
+  files: ChangedFile[];
+}
+export interface ChangeSummary {
+  totalChanged: number;
+  repos: RepoChanges[];
+}
+
+/**
+ * Aggregate uncommitted changes across all worktrees of a spec.
+ * Runs `git status --porcelain` per repo; missing/failed repos contribute
+ * an empty file list (never throws). Used by the dashboard card + Peek panel.
+ */
+export function getChangeSummary(spec: Spec): ChangeSummary {
+  const repos: RepoChanges[] = [];
+  let total = 0;
+  for (const repo of spec.repos) {
+    const files: ChangedFile[] = [];
+    if (fs.existsSync(repo.worktreePath)) {
+      try {
+        const out = execSync('git status --porcelain', {
+          cwd: repo.worktreePath, encoding: 'utf-8', timeout: 5000,
+        });
+        for (const line of out.split('\n')) {
+          if (line.length < 4) { continue; }
+          files.push({ code: line.slice(0, 2), path: line.slice(3).trim() });
+        }
+      } catch { /* leave files empty */ }
+    }
+    total += files.length;
+    repos.push({ name: repo.name, worktreePath: repo.worktreePath, files });
+  }
+  return { totalChanged: total, repos };
+}
