@@ -1,8 +1,21 @@
 import * as vscode from 'vscode';
-import { Spec, RepoEntry } from '../types';
+import { Spec, RepoEntry, SpecStatus } from '../types';
 import { listSpecs, loadSpec } from '../store';
 import { getActiveSpecName } from '../state';
 import { getWorktreeStatus, WorktreeStatus } from '../gitOps';
+import { listProjects, groupSpecsByProject, ProjectGroup } from '../projectStore';
+import { readSpecState } from '../specState';
+
+// --- Helpers ---
+
+function statusBadge(status: SpecStatus): string {
+  switch (status) {
+    case 'working': return '●';
+    case 'waiting_confirm': return '⚠';
+    case 'done': return '✓';
+    default: return '○';
+  }
+}
 
 // --- Tree item types ---
 
@@ -14,9 +27,10 @@ export class SpecTreeItem extends vscode.TreeItem {
   ) {
     super(spec.name, collapsibleState);
 
-    const statusIcon = spec.status === 'active' ? '●' : spec.status === 'completed' ? '✓' : '○';
+    const aiStatus = readSpecState(spec.name).status;
+    const badge = statusBadge(aiStatus);
     const currentTag = isCurrent ? ' ← current' : '';
-    this.label = `${statusIcon} ${spec.name}${currentTag}`;
+    this.label = `${badge} ${spec.name}${currentTag}`;
     this.description = `${spec.featureBranch} · ${spec.repos.length} repos`;
     this.tooltip = `${spec.name}\n${spec.description}\nBranch: ${spec.featureBranch}\nStatus: ${spec.status}\nRepos: ${spec.repos.length}`;
 
@@ -50,6 +64,15 @@ export class RepoTreeItem extends vscode.TreeItem {
       title: 'Reveal in Explorer',
       arguments: [vscode.Uri.file(repo.worktreePath)],
     };
+  }
+}
+
+export class ProjectTreeItem extends vscode.TreeItem {
+  constructor(public readonly group: ProjectGroup) {
+    super(group.project.name, vscode.TreeItemCollapsibleState.Expanded);
+    this.description = `${group.specs.length} features`;
+    this.contextValue = 'project';
+    this.iconPath = new vscode.ThemeIcon('folder');
   }
 }
 
@@ -109,30 +132,27 @@ export class AllSpecsTreeProvider implements vscode.TreeDataProvider<vscode.Tree
   }
 
   getChildren(element?: vscode.TreeItem): vscode.TreeItem[] {
-    if (element) {
-      // Children of a spec → repos
-      if (element instanceof SpecTreeItem) {
-        return element.spec.repos.map(repo => {
-          const status = getWorktreeStatus(repo.worktreePath);
-          return new RepoTreeItem(repo, status);
-        });
-      }
-      return [];
+    // Project node → its specs
+    if (element instanceof ProjectTreeItem) {
+      const activeSpecName = getActiveSpecName();
+      return element.group.specs.map(spec =>
+        new SpecTreeItem(spec, spec.name === activeSpecName, vscode.TreeItemCollapsibleState.Collapsed),
+      );
     }
-
-    // Root level: all specs
+    // Spec node → its repos
+    if (element instanceof SpecTreeItem) {
+      return element.spec.repos.map(repo => {
+        const status = getWorktreeStatus(repo.worktreePath);
+        return new RepoTreeItem(repo, status);
+      });
+    }
+    if (element) { return []; }
+    // Root: project groups
     const specs = listSpecs();
     if (specs.length === 0) {
       return [new vscode.TreeItem('No specs yet. Click (+) to create one.')];
     }
-
-    const activeSpecName = getActiveSpecName();
-    return specs.map(spec =>
-      new SpecTreeItem(
-        spec,
-        spec.name === activeSpecName,
-        vscode.TreeItemCollapsibleState.Collapsed,
-      ),
-    );
+    const groups = groupSpecsByProject(specs, listProjects());
+    return groups.map(g => new ProjectTreeItem(g));
   }
 }
