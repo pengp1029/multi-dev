@@ -183,6 +183,41 @@ dashboardWebview(postMessage) / notifier(系统通知+webhook) / specTreeProvide
 
 扩展是 source of truth。Webview 只渲染 `postMessage` 下发的数据；所有操作通过 message 回传给扩展执行命令，扩展执行后再 push 新状态。避免 Webview 与扩展状态漂移。
 
+### 预览面板（Peek）——降低来回切换成本
+
+**问题**：feature 增多后，频繁"切过去看一眼/回个确认再切回来"成本高。区分两种确认：
+
+- **轻确认**（"要继续吗"、"用方案 A 吗"）：瞄一眼即可回，无需读代码。
+- **重审计**（AI 产出方案或一批 diff）：必须读内容才能判断——切来切去最痛。
+
+**解法**：卡片新增 `预览` 按钮，在总控台**右侧滑出只读面板**，**不切换当前专注的 feature**（不动 workspace）。面板含两块只读内容 + 一个回复出口：
+
+```
+┌─ DASHBOARD ──────────────┬─ PEEK: login-flow (只读) ──────────┐
+│  ┌──────────────┐         │ ── AI 最近输出 (终端回放) ──────    │
+│  │⚠ login-flow  │◀ 预览中 │ 我准备用方案 A 重构 auth...        │
+│  │[进入][diff]  │         │ 涉及 3 个文件,是否继续?           │
+│  │[提交][预览]  │         │ ── 变动 diff (聚合只读) ──────     │
+│  └──────────────┘         │ backend/auth.ts  +42 -13           │
+│                           │ [回复框______________] [发送]      │
+│                           │ [批准继续] [进入深度编辑]           │
+└──────────────────────────┴────────────────────────────────────┘
+```
+
+1. **AI 最近输出**：`tmux capture-pane` 抓该 feature 会话终端回放尾部。
+2. **变动 diff**：复用卡片已聚合的变动列表，点文件只读展开 diff 文本。
+
+三种出口：
+- **回复框发送**：`send-keys` 到该 tmux 会话——审计完顺手回，零切换。
+- **批准继续**：发送确认（回车 / `yes`）到会话。
+- **进入深度编辑**：确需动手改，才触发原子切换。
+
+面板首期做**只读回放 + 单次回复框**（覆盖审计 + 确认两个高频场景）；多轮深聊仍走 `进入`。这样"来回切"降级为"右侧扫一眼"，只有真要写代码时才切窗口。
+
+### 切换延迟
+
+`进入` 走现有 `switchWorkspaceFolders` 原子替换文件夹，切过去即见对应代码（等价 ChatGPT"切了就看到内容"）。VSCode 因挂载真实 worktree 文件系统，切换有数百毫秒重扫延迟，**已确认接受**——不为降低此延迟做额外工程（YAGNI）。
+
 ## 6. AI 状态上报（Hook 注入）
 
 ### 作用域
@@ -250,6 +285,8 @@ dashboardWebview(postMessage) / notifier(系统通知+webhook) / specTreeProvide
 | 系统通知工具缺失 | 回退 VSCode 内弹窗 |
 | webhook POST 失败/超时 | 3s 超时，失败仅记 output channel 日志，不打扰 |
 | `git status` 在大仓库慢 | 卡片变动数异步加载 + 缓存，先渲染骨架 |
+| Peek `capture-pane` 无会话/tmux 不可用 | 面板提示"无可回放的终端会话"，diff 部分仍可用 |
+| Peek `send-keys` 目标会话已终止 | 回复失败提示，引导用户 `进入` 重启会话 |
 | Webview / 扩展状态不同步 | 单向数据流，扩展为 source of truth |
 
 ## 9. 测试策略
@@ -263,12 +300,14 @@ dashboardWebview(postMessage) / notifier(系统通知+webhook) / specTreeProvide
 - `notifier` 渠道选择与去重逻辑
 - `hookInstaller` 生成的 settings.json 结构正确
 - `gitOps.getChangeSummary` 聚合正确
+- Peek：`capture-pane` 输出解析、`send-keys` 命令拼接、无会话降级
 
 ### 集成 / 手动验证清单
 
 - 创建项目 → 建 feature → hook 注入生效 → ducc 触发 → 状态文件写入 → 卡片变色 → 系统通知弹出 → 点击跳转切换
 - 老 spec 打开自动归 Ungrouped
 - diff 列表点击打开正确 worktree 的文件
+- Peek 面板：回放显示 AI 输出、回复框 `send-keys` 生效、不切换当前 feature
 - 删除项目的两种选择路径
 
 每次改完跑 `npm run compile` + `npm run lint`。
@@ -279,7 +318,8 @@ dashboardWebview(postMessage) / notifier(系统通知+webhook) / specTreeProvide
 2. **总控台 Webview**：卡片墙 + 项目分组 + 进入/diff/提交（读现有数据）
 3. **状态上报**：`hookInstaller` + `report-state` 脚本 + `stateWatcher` + 卡片徽记
 4. **提醒**：`notifier` 三渠道 + 跳转 + 去重
-5. **QuickPick 快速切换器**（锦上添花，键盘流跳转）
+5. **预览面板（Peek）**：只读终端回放（`capture-pane`）+ 聚合 diff + 回复框（`send-keys`）
+6. **QuickPick 快速切换器**（锦上添花，键盘流跳转）
 
 ## 11. 涉及文档更新（实现后）
 
