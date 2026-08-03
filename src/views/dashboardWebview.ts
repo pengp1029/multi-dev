@@ -34,20 +34,27 @@ export class DashboardPanel {
   }
   /** Push fresh state to the webview. Extension is the source of truth. */
   render(): void {
-    const active = getActiveSpecName();
-    const groups = groupSpecsByProject(listSpecs(), listProjects()).map(g => ({
-      project: g.project.name,
-      specs: g.specs.map(s => {
-        const st = readSpecState(s.name);
-        const sum = getChangeSummary(s);
-        return {
-          name: s.name, branch: s.featureBranch, repos: s.repos.length,
-          changed: sum.totalChanged, status: st.status, message: st.message,
-          updatedAt: st.updatedAt, current: s.name === active,
-        };
-      }),
-    }));
-    this.panel.webview.postMessage({ type: 'data', groups });
+    try {
+      const active = getActiveSpecName();
+      const groups = groupSpecsByProject(listSpecs(), listProjects()).map(g => ({
+        project: g.project.name,
+        specs: g.specs.map(s => {
+          const st = readSpecState(s.name);
+          const sum = getChangeSummary(s);
+          return {
+            name: s.name, branch: s.featureBranch, repos: s.repos.length,
+            changed: sum.totalChanged, status: st.status, message: st.message,
+            updatedAt: st.updatedAt, current: s.name === active,
+          };
+        }),
+      }));
+      this.panel.webview.postMessage({ type: 'data', groups });
+    } catch (e) {
+      // Surface extension-side failures into the panel instead of leaving it
+      // stuck on the loading placeholder.
+      const message = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
+      this.panel.webview.postMessage({ type: 'error', message });
+    }
   }
 
   private async onMessage(m: { type: string; spec?: string; text?: string }): Promise<void> {
@@ -99,8 +106,24 @@ export class DashboardPanel {
   }
 
   private html(): string {
-    return DASHBOARD_HTML;
+    // A CSP with a per-load nonce is required for the inline <script> to run
+    // in a VSCode webview. Without it, modern VSCode blocks the inline script,
+    // the webview never calls send('refresh'), and the panel stays stuck on the
+    // static "加载中…" placeholder.
+    const nonce = getNonce();
+    const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+    return DASHBOARD_HTML
+      .replace('<head><meta charset="UTF-8">',
+        `<head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}">`)
+      .replace('<script>', `<script nonce="${nonce}">`);
   }
+}
+
+function getNonce(): string {
+  let text = '';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  for (let i = 0; i < 32; i++) { text += chars.charAt(Math.floor(Math.random() * chars.length)); }
+  return text;
 }
 
 const DASHBOARD_HTML = `<!DOCTYPE html>
@@ -142,6 +165,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const m = e.data;
     try {
       if (m.type === 'data') renderData(m.groups);
+      if (m.type === 'error') { document.getElementById('root').textContent = '扩展端出错: ' + m.message; }
       if (m.type === 'peek') renderPeek(m);
       if (m.type === 'diff') alertDiff(m);
       if (m.type === 'replyResult') { if(!m.ok) alert('回复失败：会话不存在，请先「进入」重启'); else send('peek', m.spec); }
