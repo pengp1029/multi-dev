@@ -150,7 +150,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   pre { white-space:pre-wrap; font-size:.8em; }
 </style></head><body>
   <div class="toolbar">
-    <button onclick="send('refresh')">&#8635; Refresh</button>
+    <button data-act="refresh">&#8635; Refresh</button>
   </div>
   <div id="root">加载中…</div>
   <div id="peek"></div>
@@ -174,6 +174,19 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
   });
 
+  // Event delegation: CSP with a nonce whitelists <script> tags but NOT inline
+  // onclick="" handlers, so every button carries data-act/data-spec instead and
+  // we dispatch here. This also sidesteps escaping JS strings inside HTML attrs.
+  document.addEventListener('click', function(e){
+    const btn = e.target.closest && e.target.closest('button[data-act]');
+    if (!btn) { return; }
+    const act = btn.getAttribute('data-act');
+    const spec = btn.getAttribute('data-spec') || undefined;
+    if (act === 'close-peek') { closePeek(); return; }
+    if (act === 'do-reply') { doReply(); return; }
+    send(act, spec);
+  });
+
   function renderData(groups){
     const root = document.getElementById('root');
     if (!groups || !groups.length) { root.textContent = '暂无项目/feature。点击侧边栏 (+) 创建。'; return; }
@@ -186,10 +199,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       '<div class="meta">' + s.repos + ' repos · ' + s.changed + ' changed</div>' +
       '<div class="meta ' + s.status + '">' + badge(s.status) + ' ' + LABEL[s.status] + ' ' + relTime(s.updatedAt) + '</div>' +
       '<div class="row">' +
-        '<button onclick="send(\'enter\',\'' + jsStr(s.name) + '\')">进入</button>' +
-        '<button onclick="send(\'diff\',\'' + jsStr(s.name) + '\')">diff</button>' +
-        '<button onclick="send(\'commit\',\'' + jsStr(s.name) + '\')">提交</button>' +
-        '<button onclick="send(\'peek\',\'' + jsStr(s.name) + '\')">预览</button>' +
+        '<button data-act="enter" data-spec="' + escapeHtml(s.name) + '">进入</button>' +
+        '<button data-act="diff" data-spec="' + escapeHtml(s.name) + '">diff</button>' +
+        '<button data-act="commit" data-spec="' + escapeHtml(s.name) + '">提交</button>' +
+        '<button data-act="peek" data-spec="' + escapeHtml(s.name) + '">预览</button>' +
       '</div></div>';
   }
   function badge(st){ return st==='working'?'●':st==='waiting_confirm'?'⚠':st==='done'?'✓':'○'; }
@@ -201,7 +214,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const peek=document.getElementById('peek');
     peek.style.display='block';
     peek.innerHTML='<h3>变动: ' + escapeHtml(m.spec) + '</h3>' + fileList(m.summary) +
-      '<div class="row"><button onclick="closePeek()">关闭</button></div>';
+      '<div class="row"><button data-act="close-peek">关闭</button></div>';
   }
   function renderPeek(m){
     const peek=document.getElementById('peek');
@@ -210,10 +223,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       '<h4>AI 最近输出</h4><pre>' + escapeHtml(m.pane) + '</pre>' +
       '<h4>变动</h4>' + fileList(m.summary) +
       '<div class="row"><input id="replyBox" placeholder="输入确认/指令" style="flex:1"/>' +
-      '<button onclick="doReply()">发送</button>' +
-      '<button onclick="send(\'approve\',\'' + jsStr(m.spec) + '\')">批准继续</button>' +
-      '<button onclick="send(\'enter\',\'' + jsStr(m.spec) + '\')">进入深度编辑</button>' +
-      '<button onclick="closePeek()">关闭</button></div>';
+      '<button data-act="do-reply">发送</button>' +
+      '<button data-act="approve" data-spec="' + escapeHtml(m.spec) + '">批准继续</button>' +
+      '<button data-act="enter" data-spec="' + escapeHtml(m.spec) + '">进入深度编辑</button>' +
+      '<button data-act="close-peek">关闭</button></div>';
     peek.dataset.spec = m.spec;
   }
   function doReply(){
@@ -222,12 +235,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     if(box.value.trim()) send('reply', spec, box.value.trim());
   }
   function closePeek(){ document.getElementById('peek').style.display='none'; }
-  function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-  // Escape a value for safe embedding inside a single-quoted JS string in an onclick attribute.
-  function jsStr(s){ return escapeHtml((s||'').replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'")); }
+  // Escape for both text content and double-quoted attribute values (covers < > & " ').
+  function escapeHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
-  // Request initial data once the script has loaded. The extension may have
-  // already posted a 'data' message before this listener existed (constructor
-  // races the webview boot), so pull explicitly instead of relying on that push.
+  // Pull initial data once the script has loaded (the constructor's first push
+  // may have raced ahead of this listener being registered).
   send('refresh');
 </script></body></html>`;
