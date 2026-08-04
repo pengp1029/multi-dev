@@ -12,6 +12,12 @@ tmux-agent 是一个 VSCode 扩展，用于管理多仓库隔离开发任务（S
 - Feature 分支名
 - 关联的多个 Git 仓库
 - AI Agent 命令（默认 ducc）
+- 可选的 `projectName`：所属 Project 的名称
+
+### Project（项目）
+一个 Project 是多个相关 Spec 的逻辑容器。Project 配置持久化于 `~/.tmux-agent/projects/<name>.yaml`。未指定 `projectName` 的 Spec 归入虚拟 `Ungrouped` 组（不写入磁盘）。
+
+Project → Spec 两层模型贯穿侧边栏和 Dashboard，使并发管理多个 Feature 时的导航更清晰。
 
 ### 隔离机制
 - 每个 Spec 的每个 Repo 都通过 `git worktree` 创建独立的工作目录
@@ -80,9 +86,13 @@ VSCode 终端 attach (上下文保留)
 ```
 ~/.tmux-agent/
 ├── specs/           # Spec YAML 配置文件
+├── projects/        # Project YAML 配置文件（NEW）
 ├── worktrees/       # Git worktree 工作目录
 │   └── <spec>/      # Spec 根目录（可放 spec.md、笔记、设计稿等任务级文件）
+│       ├── .claude/
+│       │   └── settings.json  # worktree 级 hook 配置（由 hookInstaller 写入）
 │       └── <repo>/  # 各 repo 的 worktree
+├── state/           # AI 状态文件（NEW）：{ status, message?, updatedAt }
 └── workspaces/      # .code-workspace 文件
 ```
 
@@ -92,5 +102,66 @@ VSCode 终端 attach (上下文保留)
 - js-yaml (YAML 读写)
 - git CLI (worktree 操作)
 - tmux (Agent 会话持久化，可选)
-- VSCode Webview (创建表单)
-- VSCode TreeView (侧边栏)
+- VSCode Webview (创建表单 + Dashboard)
+- VSCode TreeView (侧边栏，两层 Project → Spec)
+- Node.js fs.watch (AI 状态目录监听)
+
+## Dashboard 交互流程
+
+```
+用户点击 Dashboard 图标
+    ↓
+DashboardPanel.createOrShow()
+    ↓
+读取 store.ts (所有 Spec) + specState.ts (所有 AI 状态) + gitOps.getChangeSummary()
+    ↓
+render() → postMessage(data) → Webview 渲染卡片墙（按 Project 分组）
+    ↓
+用户点击卡片操作按钮:
+  ├── 进入 → postMessage({type:'switch'}) → extension switchSpec()
+  ├── 提交 → postMessage({type:'commit'}) → extension commitSpec()
+  ├── diff → postMessage({type:'diff'})   → extension 打开 diff 视图
+  └── 预览 → Peek 面板（右侧滑出，不切换 workspace）
+               ├── capturePane(specName)   → tmux 终端输出重放
+               ├── getChangeSummary(spec)  → 聚合 diff 展示
+               ├── 回复框 send-keys        → sendReply(specName, text)
+               └── 批准继续 / 进入深度编辑
+```
+
+Dashboard 遵循**单向数据流**：扩展是唯一的数据源，Webview 只负责展示和回传操作意图；所有副作用（切换 Spec、提交等）由扩展处理。Peek 面板是只读审阅视图，不会切换当前 workspace。
+
+## AI 状态上报机制
+
+```
+ducc 完成一轮 / 等待用户确认
+    ↓
+Claude Code 触发 Stop hook 或 Notification hook
+    ↓
+scripts/report-state.js <status> <spec>
+（由 hookInstaller 写入 spec worktree 根目录的 .claude/settings.json）
+    ↓
+写入 ~/.tmux-agent/state/<spec>.json
+{ status, message?, updatedAt }
+    ↓
+stateWatcher.ts (fs.watch + 100ms 防抖)
+读取新状态，与内存缓存对比
+    ↓ 仅状态实际改变时触发
+onDidChangeState({ specName, prev, next })
+    ↓
+extension.ts 监听器（并行触发）:
+  ├── refreshViews()                    — 刷新侧边栏状态徽章
+  ├── DashboardPanel.current?.render()  — 刷新 Dashboard 卡片
+  └── notify(specName, prev, next)      — 三通道通知（shouldNotify 去重）
+        ├── 系统通知 (osascript/notify-send/BurntToast)
+        ├── Webhook POST (fire-and-forget, 3s 超时)
+        └── VSCode Toast（带"进入"按钮 → switchSpec）
+```
+
+`SpecStatus` 值及语义：
+
+| 状态 | 触发时机 | 徽章 |
+|------|----------|------|
+| `working` | AI 正在执行（由扩展在启动 agent 时写入） | ●工作中 |
+| `waiting_confirm` | Notification hook 触发（AI 等待用户确认） | ⚠等确认 |
+| `done` | Stop hook 触发（AI 回合结束） | ✓完成 |
+| `idle` | 初始状态 / 状态文件缺失 | ○空闲 |

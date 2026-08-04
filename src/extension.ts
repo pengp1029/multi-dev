@@ -13,6 +13,10 @@ import { registerAddRepoCommand } from './commands/addRepo';
 import { registerCommitSpecCommand } from './commands/commitSpec';
 import { registerCleanupSpecCommand } from './commands/cleanupSpec';
 import { registerDeleteSpecCommand } from './commands/deleteSpec';
+import { DashboardPanel } from './views/dashboardWebview';
+import { StateWatcher } from './stateWatcher';
+import { shouldNotify, passNotifyCooldown, notify } from './notifier';
+import { readSpecState } from './specState';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('[tmux-agent] Extension activating...');
@@ -51,11 +55,32 @@ export function activate(context: vscode.ExtensionContext) {
     registerCleanupSpecCommand(refreshViews),
     registerDeleteSpecCommand(refreshViews),
     vscode.commands.registerCommand('tmuxAgent.refreshSpecs', refreshViews),
+    vscode.commands.registerCommand('tmuxAgent.openDashboard', () => {
+      DashboardPanel.createOrShow(refreshViews);
+    }),
   );
   console.log('[tmux-agent] Commands registered successfully');
 
   // --- Terminal lifecycle ---
   registerTerminalCloseHandler(context);
+
+  // --- AI status watcher: badge refresh + notifications ---
+  const stateWatcher = new StateWatcher();
+  context.subscriptions.push(stateWatcher);
+  const stateSub = stateWatcher.onDidChangeState(({ specName, prev, next }) => {
+    // Refresh sidebar badges and dashboard cards on every change.
+    refreshViews();
+    DashboardPanel.current?.render();
+    // Intrusive notification only for waiting_confirm/done transitions,
+    // and rate-limited per spec so unanswered prompts don't spam toasts.
+    if (shouldNotify(prev, next) && passNotifyCooldown(specName)) {
+      notify(specName, next, readSpecState(specName).message, () => {
+        vscode.commands.executeCommand('tmuxAgent.switchSpec', { spec: loadSpec(specName) });
+      });
+    }
+  });
+  context.subscriptions.push({ dispose: () => stateSub.dispose() });
+  stateWatcher.start();
 
   // --- Start repo guard: closes any git repo not belonging to active spec ---
   startRepoGuard(context);

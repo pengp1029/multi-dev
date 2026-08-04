@@ -83,6 +83,11 @@
         "command": "tmuxAgent.refreshSpecs",
         "title": "Tmux Agent: Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "tmuxAgent.openDashboard",
+        "title": "Tmux Agent: Open Dashboard",
+        "icon": "$(dashboard)"
       }
     ],
     "menus": {
@@ -94,6 +99,11 @@
         },
         {
           "command": "tmuxAgent.refreshSpecs",
+          "when": "view == tmuxAgentAllSpecs",
+          "group": "navigation"
+        },
+        {
+          "command": "tmuxAgent.openDashboard",
           "when": "view == tmuxAgentAllSpecs",
           "group": "navigation"
         },
@@ -130,16 +140,40 @@
       ]
     }
   },
+  "configuration": {
+    "title": "Tmux Agent",
+    "properties": {
+      "tmuxAgent.notify.system": {
+        "type": "boolean",
+        "default": true,
+        "description": "AI 需确认/完成时发送系统通知（含声音）"
+      },
+      "tmuxAgent.notify.webhookUrl": {
+        "type": "string",
+        "default": "",
+        "description": "外部推送 webhook URL（留空则不推送）；POST { spec, status, message, updatedAt }"
+      }
+    }
+  },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "test": "mocha"
   },
   "devDependencies": {
+    "@types/chai": "^5.2.3",
     "@types/js-yaml": "^4.0.9",
+    "@types/mocha": "^10.0.10",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.65.0",
+    "@typescript-eslint/parser": "^8.65.0",
+    "chai": "^6.2.2",
+    "eslint": "^10.8.0",
+    "mocha": "^11.8.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.0"
   },
   "dependencies": {

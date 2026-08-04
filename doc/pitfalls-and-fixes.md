@@ -702,6 +702,144 @@ currentTmuxSession = sessionName;
 
 ---
 
+## Bug 22: tmux 切换后窗口变小、右侧留白
+
+**现象**: 在 VSCode 里切换 spec 后，Agent 终端里的 tmux 画面突然缩小，右侧出现大块空白区域。
+
+**原因**: tmux 会把 session 的渲染尺寸缩到所有已连接客户端中最小的那一个。切换 spec 时，新建的 VSCode 终端执行 `tmux attach-session -t <newSession>`，但旧 VSCode 终端还没有 dispose，仍以旧客户端身份 attach 在同一个 tmux session 上。tmux 按那个残留小尺寸客户端渲染，新终端看到的就是缩小后的画面，右侧产生留白。
+
+**修复**:
+- 在 `launchWithTmux` 的 `attach-session` 调用中加 `-d` 参数，attach 时踢掉 session 上已有的其它客户端
+- tmux session 本身及其中运行的 agent 进程不受影响，只是断开了其它客户端的连接
+- 当前 VSCode 终端成为唯一客户端，tmux 按其真实尺寸渲染，留白消失
+
+**代码** (`src/terminalOps.ts`):
+```typescript
+// ❌ 修复前：其它客户端仍 attach，tmux 按最小尺寸渲染
+shellArgs: ['attach-session', '-t', sessionName]
+
+// ✅ 修复后：-d 踢掉其它客户端，当前终端独占 session
+shellArgs: ['attach-session', '-d', '-t', sessionName]
+```
+
+---
+
+## Bug 23: Dashboard 打开后全黑不渲染
+
+**现象**: 打开 Dashboard 总控台后，面板一片黑，没有任何项目或 feature 卡片显示。
+
+**原因**: `DashboardPanel` 构造函数在 `render()` 中调用 `panel.webview.postMessage({ type: 'data', ... })` 下发初始数据，但此时 webview HTML 的脚本可能尚未完成加载，`window.addEventListener('message', ...)` 监听器还未注册（webview 脚本加载与构造函数执行之间存在竞态）。那一帧 `postMessage` 被丢弃，后续再也没有人重新推送数据，导致卡片永不渲染。
+
+**修复**:
+- 在 webview 脚本末尾主动调用 `send('refresh')`，脚本加载完成后立即向扩展拉取一次数据，不再依赖那次可能被竞态丢弃的初始推送
+- 扩展侧 `onMessage` 收到 `'refresh'` 消息后调用 `render()` 重新下发完整数据
+- 这样无论构造时机如何，webview 脚本就绪后都能主动触发一次完整渲染
+
+**代码** (`src/views/dashboardWebview.ts`):
+```typescript
+// webview 脚本末尾：脚本加载完成后主动拉取数据，消除竞态
+send('refresh');
+```
+
+---
+
+## Bug 24: AI 等待确认时通知反复弹出
+
+**现象**: AI 进入「等待确认」状态后，如果用户迟迟不回复，系统会反复弹出同一条通知，而不是只提醒一次。
+
+**原因**: 原来只用纯函数 `shouldNotify(prev, next)` 判断是否通知，它只看状态转移。但 state watcher 每次轮询读到 `waiting_confirm` 都可能触发一次判断，只要出现「非 waiting_confirm → waiting_confirm」的抖动（例如中间被读成 working 又回到 waiting_confirm），就会重复通知。缺少一个「同一 spec 短时间内不重复打扰」的时间闸门。
+
+**修复**:
+- 新增有状态的 `passNotifyCooldown(specName, now, cooldownMs)`，按 spec 记录上次通知时间，8 秒内不再重复通知
+- 与纯函数 `shouldNotify` 解耦：`shouldNotify` 只管状态转移逻辑（可单测），`passNotifyCooldown` 只管时间去重
+- 扩展侧两者串联：`shouldNotify(prev, next) && passNotifyCooldown(specName)` 同时成立才真正 notify
+
+**代码** (`src/notifier.ts` / `src/extension.ts`):
+```typescript
+// notifier.ts：per-spec 冷却闸门
+const NOTIFY_COOLDOWN_MS = 8000;
+const _lastNotify = new Map<string, number>();
+export function passNotifyCooldown(specName: string, now = Date.now(), cooldownMs = NOTIFY_COOLDOWN_MS): boolean {
+  const last = _lastNotify.get(specName);
+  if (last !== undefined && now - last < cooldownMs) { return false; }
+  _lastNotify.set(specName, now);
+  return true;
+}
+
+// extension.ts：状态转移 + 冷却双条件
+if (shouldNotify(prev, next) && passNotifyCooldown(specName)) {
+  notify(specName, next, readSpecState(specName).message, ...);
+}
+```
+
+---
+
+## Bug 25: 侧边栏状态标识只有形状、没有颜色
+
+**现象**: 侧边栏 spec 列表的状态标识只能看到不同图标形状，但没有颜色区分（本应蓝=工作中、黄=等待确认、绿=已完成）。
+
+**原因**: 一开始试图给 `TreeItem.label` 上色，但 VSCode 的 TreeItem label 不支持自定义颜色。颜色只能通过 `ThemeIcon` 携带的 `ThemeColor` 表达。
+
+**修复**:
+- 用 `new vscode.ThemeIcon(codiconId, new vscode.ThemeColor(...))` 同时携带图标形状和颜色
+- 映射：working→`circle-filled`+`charts.blue`、waiting_confirm→`warning`+`charts.yellow`、done→`pass-filled`+`charts.green`、idle→`circle-outline`+`descriptionForeground`
+- `SpecTreeItem` 里设 `this.iconPath = statusIcon(aiStatus)`
+
+**代码** (`src/views/specTreeProvider.ts`):
+```typescript
+function statusIcon(status: SpecStatus): vscode.ThemeIcon {
+  switch (status) {
+    case 'working': return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.blue'));
+    case 'waiting_confirm': return new vscode.ThemeIcon('warning', new vscode.ThemeColor('charts.yellow'));
+    case 'done': return new vscode.ThemeIcon('pass-filled', new vscode.ThemeColor('charts.green'));
+    default: return new vscode.ThemeIcon('circle-outline', new vscode.ThemeColor('descriptionForeground'));
+  }
+}
+```
+
+---
+
+## Bug 26: Dashboard 永远停在「加载中…」（CSP 拦截内联脚本与 onclick）
+
+**现象**: Dashboard 面板一直显示「加载中…」占位符，卡片始终不渲染。Bug 23 加的 `send('refresh')` 也没解决。
+
+**原因**: 两层原因叠加，且第二层被第一层掩盖：
+1. **CSP 拦截内联脚本**：现代 VSCode webview 默认 CSP 会阻止没有 nonce 的内联 `<script>`。脚本根本没执行，`send('refresh')` 自然不生效。
+2. **修好第一层后暴露第二层**：给 `<script>` 加了 nonce 让它能跑，但卡片按钮用的是内联 `onclick="send('enter', ...)"`。CSP **只放行带 nonce 的 `<script>` 标签，绝不放行内联 onclick**；更致命的是这些 onclick 是拼进 HTML 字符串的，单引号嵌套让浏览器解析时直接抛 `Unexpected identifier 'enter'`，**整段内联脚本在这一行崩掉**，后面的 `send('refresh')` 永远执行不到。
+
+**修复**:
+- `html()` 注入带 per-load nonce 的 CSP：`script-src 'nonce-${nonce}'`，并把 `<script>` 替换为 `<script nonce="...">`
+- 彻底移除所有内联 onclick，按钮改为携带 `data-act` / `data-spec` 属性
+- 用单个事件委托监听 `document.addEventListener('click', ...)` 统一分发 `send(act, spec)`
+- 删除易错的 `jsStr()`，`escapeHtml()` 扩展为同时转义 `"` 和 `'`
+- 教训：webview 改动应在真实浏览器里跑编译产物验证（headless Playwright + 本地 http server，Playwright 不允许 `file://`），而不是反复靠 F5 截图猜测
+
+**代码** (`src/views/dashboardWebview.ts`):
+```typescript
+// 1. 注入 CSP + nonce
+private html(): string {
+  const nonce = getNonce();
+  const csp = `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+  return DASHBOARD_HTML
+    .replace('<head><meta charset="UTF-8">',
+      `<head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}">`)
+    .replace('<script>', `<script nonce="${nonce}">`);
+}
+```
+```javascript
+// 2. 按钮用 data 属性，不再内联 onclick
+'<button data-act="enter" data-spec="' + escapeHtml(s.name) + '">进入</button>'
+
+// 3. 事件委托统一分发（CSP 放行 <script> 但不放行内联 onclick）
+document.addEventListener('click', function(e){
+  const btn = e.target.closest && e.target.closest('button[data-act]');
+  if (!btn) { return; }
+  send(btn.getAttribute('data-act'), btn.getAttribute('data-spec') || undefined);
+});
+```
+
+---
+
 ## 踩坑总结
 
 ### VSCode `updateWorkspaceFolders()` API

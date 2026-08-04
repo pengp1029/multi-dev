@@ -8,12 +8,15 @@ import { refreshGitRepositories } from '../gitScm';
 import { SpecTreeItem } from '../views/specTreeProvider';
 
 export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disposable {
-  return vscode.commands.registerCommand('tmuxAgent.switchSpec', async (item?: SpecTreeItem) => {
+  return vscode.commands.registerCommand('tmuxAgent.switchSpec', async (item?: SpecTreeItem | { spec?: { name: string }; specName?: string }) => {
     console.log('[tmux-agent:switchSpec] command triggered, item:', item instanceof SpecTreeItem ? item.spec.name : typeof item);
     let specName: string | undefined;
 
     if (item instanceof SpecTreeItem) {
       specName = item.spec.name;
+    } else if (item && typeof item === 'object' && ('spec' in item || 'specName' in item)) {
+      const anyItem = item as { spec?: { name: string }; specName?: string };
+      specName = anyItem.spec?.name ?? anyItem.specName;
     } else {
       const currentSpecName = getActiveSpecName();
       const specs = listSpecs();
@@ -39,6 +42,7 @@ export function registerSwitchSpecCommand(refreshViews: () => void): vscode.Disp
     }
 
     console.log(`[tmux-agent:switchSpec] specName="${specName}"`);
+    if (!specName) { return; }
     const spec = loadSpec(specName);
     if (!spec) {
       vscode.window.showErrorMessage(`Spec "${specName}" not found.`);
